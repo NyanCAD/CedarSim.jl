@@ -5,17 +5,18 @@
 import ...@case
 
 function parse_spice_toplevel(ps)::EXPR
-    ex = @case kind(nt(ps)) begin
-        SIMULATOR => parse_simulator(ps)
-        DOT => parse_dot(ps)
-        TITLE_LINE => parse_title(ps)
-        NEWLINE => error("internal error: forgot to eat a newline?")
+    @case kind(nt(ps)) begin
+        SIMULATOR  => return parse_simulator(ps)
+        DOT        => return parse_dot(ps)
+        TITLE_LINE => return parse_title(ps)
+        NEWLINE    => @assert false "internal error: forgot to eat a newline?"
+        _          => nothing # fall-through
     end
-    ex === nothing || return ex
-    if is_ident(kind(nt(ps)))
-        return parse_instance(ps)
+    if !is_ident(kind(nt(ps)))
+        # TODO: This should be an "unrecognized SPICE directive/instance" error
+        return extend_to_line_end(_error!(ps, UnexpectedToken), ps)
     end
-    error!(ps, UnexpectedToken)
+    return parse_instance(ps)
 end
 
 
@@ -747,25 +748,39 @@ function parse_end(ps, dot)
     return EXPR(EndStatement(dot, endd, nl))
 end
 
+function unimplemented_instance_error(ps)
+    # TODO: Emit more specific "unimplemented instance" error
+    return extend_to_line_end(_error!(ps, UnexpectedToken), ps)
+end
+
+# Parse an "instance" line
+#
+# The current next token must be an IDENTIFIER.
 function parse_instance(ps)
     @case kind(nt(ps)) begin
-        IDENTIFIER_RESISTOR => parse_resistor(ps)
-        IDENTIFIER_VOLTAGE => parse_voltage(ps)
-        IDENTIFIER_CURRENT => parse_current(ps)
+        IDENTIFIER => unimplemented_instance_error(ps) # .lib path/section, escaping backslash, unknown (non-keyword) identifier
+        IDENTIFIER_IBIS_BUFFER => unimplemented_instance_error(sp) # TODO
+        IDENTIFIER_BEHAVIORAL => parse_behavioral(ps)
+        IDENTIFIER_CAPACITOR => parse_capacitor(ps)
+        IDENTIFIER_DIODE => parse_diode(ps)
         IDENTIFIER_VOLTAGE_CONTROLLED_CURRENT => parse_controlled(ControlledSource{:V, :C}, ps)
         IDENTIFIER_VOLTAGE_CONTROLLED_VOLTAGE => parse_controlled(ControlledSource{:V, :V}, ps)
         IDENTIFIER_CURRENT_CONTROLLED_CURRENT => parse_controlled(ControlledSource{:C, :C}, ps)
         IDENTIFIER_CURRENT_CONTROLLED_VOLTAGE => parse_controlled(ControlledSource{:C, :V}, ps)
-        IDENTIFIER_BEHAVIORAL => parse_behavioral(ps)
+        IDENTIFIER_CURRENT => parse_current(ps)
+        IDENTIFIER_JFET => unimplemented_instance_error(ps) # TODO
+        IDENTIFIER_LINEAR_MUTUAL_INDUCTOR => unimplemented_instance_error(ps) # TODO
+        IDENTIFIER_LINEAR_INDUCTOR => parse_inductor(ps)
         IDENTIFIER_MOSFET => parse_mosfet(ps)
+        IDENTIFIER_PORT => unimplemented_instance_error(ps) # TODO
+        IDENTIFIER_BIPOLAR_TRANSISTOR => parse_bipolar_transistor(ps)
+        IDENTIFIER_RESISTOR => parse_resistor(ps)
         IDENTIFIER_S_PARAMETER_ELEMENT => parse_s_parameter_element(ps)
         IDENTIFIER_SWITCH => parse_switch(ps)
-        IDENTIFIER_DIODE => parse_diode(ps)
-        IDENTIFIER_CAPACITOR => parse_capacitor(ps)
-        IDENTIFIER_LINEAR_INDUCTOR => parse_inductor(ps)
+        IDENTIFIER_VOLTAGE => parse_voltage(ps)
+        IDENTIFIER_TRANSMISSION_LINE => unimplemented_instance_error(ps) # TODO
         IDENTIFIER_SUBCIRCUIT_CALL => parse_subckt_call(ps)
-        IDENTIFIER_BIPOLAR_TRANSISTOR => parse_bipolar_transistor(ps)
-        _ => error!(ps, UnexpectedToken)
+        _ => @assert false # all identifier kinds covered above
     end
 end
 
@@ -1153,6 +1168,13 @@ end
 function take_julia_escape_body(ps)
     @assert kind(nt(ps)) == JULIA_ESCAPE
     return EXPR!(JuliaEscapeBody(), ps)
+end
+
+function _error!(ps, kind, expected=nothing)
+    ps.errored = true
+    # debug && error("error token with kind $(nt(ps))")
+    # throw(SPICEParserError(ps, kind, expected))
+    return EXPR!(Error(kind, expected), ps)
 end
 
 function error!(ps, kind, expected=nothing)

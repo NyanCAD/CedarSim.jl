@@ -24,6 +24,7 @@ struct JuliaEscapeBody <: Terminal; end
 
 struct Error <: Terminal
     kind::ErrorKind
+    expected
 end
 
 const Maybe{T} = Union{T, Nothing}
@@ -653,4 +654,17 @@ function EXPR!(val::Terminal, ps)
     next(ps)
     offset = UInt32(ps.t.startbyte - prev)
     return EXPR(fw, offset, UInt32(ps.t.endbyte - ps.t.startbyte + 1), val)
+end
+
+# Return an expanded version of terminal `expr` extending to the end of the line
+function extend_to_line_end(expr, ps)
+    (; fullwidth, off, width, form) = expr
+    @assert form isa Terminal
+    while !(kind(nt(ps)) in (NEWLINE, ENDMARKER))
+        fullwidth += ps.npos - ps.pos
+        next(ps)
+    end
+    fullwidth += ps.npos - ps.pos
+    t = next(ps)
+    return EXPR(fullwidth, off, width, form)
 end
