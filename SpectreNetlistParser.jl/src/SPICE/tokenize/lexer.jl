@@ -533,12 +533,12 @@ function lex_identifier(l::Lexer{IO_t,T}, c) where {IO_t,T}
 end
 
 function lex_instance(l::Lexer{IO_t,T}, c) where {IO_t,T}
-    typ = if c == 'D'
-        IDENTIFIER_DIODE
-    elseif c == 'B'
+    typ = if c == 'B'
         IDENTIFIER_BEHAVIORAL
     elseif c == 'C'
         IDENTIFIER_CAPACITOR
+    elseif c == 'D'
+        IDENTIFIER_DIODE
     elseif c == 'E'
         IDENTIFIER_VOLTAGE_CONTROLLED_VOLTAGE
     elseif c == 'F'
@@ -557,24 +557,40 @@ function lex_instance(l::Lexer{IO_t,T}, c) where {IO_t,T}
         IDENTIFIER_LINEAR_INDUCTOR
     elseif c == 'M'
         IDENTIFIER_MOSFET
-    elseif c == 'P'
+    elseif c == 'N' && l.spice_dialect === :ngspice
+        IDENTIFIER_OSDI
+    elseif c == 'O' # lossy tranmission line
+        IDENTIFIER_TRANSMISSION_LINE # LTRA
+    elseif c == 'P' && l.spice_dialect === :hspice
         IDENTIFIER_PORT
+    elseif c == 'P' && l.spice_dialect === :ngspice
+        IDENTIFIER_TRANSMISSION_LINE # CPL
     elseif c == 'Q'
         IDENTIFIER_BIPOLAR_TRANSISTOR
     elseif c == 'R'
         IDENTIFIER_RESISTOR
-    elseif c == 'S' && l.spice_dialect == :ngspice
-        IDENTIFIER_SWITCH
-    elseif c == 'S' && l.spice_dialect == :hspice
+    elseif c == 'S' && l.spice_dialect === :hspice
         IDENTIFIER_S_PARAMETER_ELEMENT
+    elseif c == 'S' && l.spice_dialect === :ngspice
+        IDENTIFIER_SWITCH
     elseif c == 'V'
         IDENTIFIER_VOLTAGE
-    elseif c == 'T' || c == 'U' || c == 'W'
+    elseif c == 'T'
         IDENTIFIER_TRANSMISSION_LINE
+    elseif c == 'U'
+        IDENTIFIER_TRANSMISSION_LINE # URC
+    elseif c == 'W' && l.spice_dialect === :hspice
+        IDENTIFIER_TRANSMISSION_LINE
+    elseif c == 'W' && l.spice_dialect === :ngspice
+        IDENTIFIER_SWITCH
     elseif c == 'X'
         IDENTIFIER_SUBCIRCUIT_CALL
+    elseif c == 'Y' && l.spice_dialect === :ngspice
+        IDENTIFIER_TRANSMISSION_LINE # TXL
+    elseif c == 'Z' && l.spice_dialect === :ngspice
+        IDENTIFIER_HFET_MESA
     else
-        error("unhandled first character in instance $(repr(c))")
+        IDENTIFIER_UNKNOWN_INSTANCE
     end
 
     if accept(l, is_instance_start_char)
