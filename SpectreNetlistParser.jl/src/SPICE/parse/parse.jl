@@ -48,8 +48,8 @@ function parse_dot(ps, dot)
         TEMP => parse_temp(ps, dot)
         WIDTH => parse_width(ps, dot)
         HDL => parse_hdl(ps, dot)
-        IF => parse_if(ps, dot)
-        _ =>  error!(ps, UnexpectedToken)
+        # TODO: This should return an "unexpected DOT command" error
+        _ => extend_to_line_end(_error!(ps, UnexpectedToken), ps)
     end
 end
 
@@ -758,28 +758,32 @@ end
 # The current next token must be an IDENTIFIER.
 function parse_instance(ps)
     @case kind(nt(ps)) begin
-        IDENTIFIER => unimplemented_instance_error(ps) # .lib path/section, escaping backslash, unknown (non-keyword) identifier
-        IDENTIFIER_IBIS_BUFFER => unimplemented_instance_error(sp) # TODO
-        IDENTIFIER_BEHAVIORAL => parse_behavioral(ps)
-        IDENTIFIER_CAPACITOR => parse_capacitor(ps)
-        IDENTIFIER_DIODE => parse_diode(ps)
+        IDENTIFIER_BEHAVIORAL                 => parse_behavioral(ps)
+        IDENTIFIER_CAPACITOR                  => parse_capacitor(ps)
+        IDENTIFIER_DIODE                      => parse_diode(ps)
         IDENTIFIER_VOLTAGE_CONTROLLED_CURRENT => parse_controlled(ControlledSource{:V, :C}, ps)
         IDENTIFIER_VOLTAGE_CONTROLLED_VOLTAGE => parse_controlled(ControlledSource{:V, :V}, ps)
         IDENTIFIER_CURRENT_CONTROLLED_CURRENT => parse_controlled(ControlledSource{:C, :C}, ps)
         IDENTIFIER_CURRENT_CONTROLLED_VOLTAGE => parse_controlled(ControlledSource{:C, :V}, ps)
-        IDENTIFIER_CURRENT => parse_current(ps)
-        IDENTIFIER_JFET => unimplemented_instance_error(ps) # TODO
-        IDENTIFIER_LINEAR_MUTUAL_INDUCTOR => unimplemented_instance_error(ps) # TODO
-        IDENTIFIER_LINEAR_INDUCTOR => parse_inductor(ps)
-        IDENTIFIER_MOSFET => parse_mosfet(ps)
-        IDENTIFIER_PORT => unimplemented_instance_error(ps) # TODO
-        IDENTIFIER_BIPOLAR_TRANSISTOR => parse_bipolar_transistor(ps)
-        IDENTIFIER_RESISTOR => parse_resistor(ps)
-        IDENTIFIER_S_PARAMETER_ELEMENT => parse_s_parameter_element(ps)
-        IDENTIFIER_SWITCH => parse_switch(ps)
-        IDENTIFIER_VOLTAGE => parse_voltage(ps)
-        IDENTIFIER_TRANSMISSION_LINE => unimplemented_instance_error(ps) # TODO
-        IDENTIFIER_SUBCIRCUIT_CALL => parse_subckt_call(ps)
+        IDENTIFIER_CURRENT                    => parse_current(ps)
+        IDENTIFIER_JFET                       => unimplemented_instance_error(ps) # TODO
+        IDENTIFIER_HFET_MESA                  => unimplemented_instance_error(ps) # TODO
+        IDENTIFIER_LINEAR_MUTUAL_INDUCTOR     => unimplemented_instance_error(ps) # TODO
+        IDENTIFIER_LINEAR_INDUCTOR            => parse_inductor(ps)
+        IDENTIFIER_MOSFET                     => parse_mosfet(ps)
+        IDENTIFIER_OSDI                       => unimplemented_instance_error(ps)
+        IDENTIFIER_PORT                       => unimplemented_instance_error(ps) # TODO
+        IDENTIFIER_BIPOLAR_TRANSISTOR         => parse_bipolar_transistor(ps)
+        IDENTIFIER_RESISTOR                   => parse_resistor(ps)
+        IDENTIFIER_S_PARAMETER_ELEMENT        => parse_s_parameter_element(ps)
+        IDENTIFIER_SWITCH                     => parse_switch(ps)
+        IDENTIFIER_VOLTAGE                    => parse_voltage(ps)
+        IDENTIFIER_TRANSMISSION_LINE          => unimplemented_instance_error(ps) # TODO
+        IDENTIFIER_SUBCIRCUIT_CALL            => parse_subckt_call(ps)
+        # TODO: This should be an "unexpected instance type" or "unexpected instance prefix" error
+        IDENTIFIER_UNKNOWN_INSTANCE           => unimplemented_instance_error(ps)
+        # TODO: .lib path/section, escaping backslash, unknown (non-keyword) identifier
+        IDENTIFIER                            => unimplemented_instance_error(ps)
         _ => @assert false # all identifier kinds covered above
     end
 end

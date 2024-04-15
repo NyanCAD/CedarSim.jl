@@ -20,7 +20,6 @@ end
     # https://cseweb.ucsd.edu/classes/wi10/cse241a/assign/hspice_sa.pdf page 57
     begin_identifiers,
         IDENTIFIER, # foo, Σxx
-        IDENTIFIER_IBIS_BUFFER,
         IDENTIFIER_BEHAVIORAL,
         IDENTIFIER_CAPACITOR,
         IDENTIFIER_DIODE,
@@ -30,9 +29,11 @@ end
         IDENTIFIER_CURRENT_CONTROLLED_CURRENT,
         IDENTIFIER_CURRENT,
         IDENTIFIER_JFET,
+        IDENTIFIER_HFET_MESA,
         IDENTIFIER_LINEAR_MUTUAL_INDUCTOR,
         IDENTIFIER_LINEAR_INDUCTOR,
         IDENTIFIER_MOSFET,
+        IDENTIFIER_OSDI,
         IDENTIFIER_PORT,
         IDENTIFIER_BIPOLAR_TRANSISTOR,
         IDENTIFIER_RESISTOR,
@@ -41,6 +42,7 @@ end
         IDENTIFIER_VOLTAGE,
         IDENTIFIER_TRANSMISSION_LINE,
         IDENTIFIER_SUBCIRCUIT_CALL,
+        IDENTIFIER_UNKNOWN_INSTANCE,
     end_identifiers,
 
     BASE_SPEC, # 'b (but not hex)
