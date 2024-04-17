@@ -1637,6 +1637,9 @@ end
 
 function load_spice_modules(file; kwargs...)
     sa = CedarSim.SpectreNetlistParser.SPICENetlistParser.SPICENetlistCSTParser.parsefile(file)
+    if sa.ps.errored
+        throw(LoadError(file, 0, SpectreParseError(sa)))
+    end
     make_spectre_modules(sa; kwargs...)
 end
 
@@ -1714,6 +1717,9 @@ function Base.include(mod::Module, file::SpcFile)
     include_paths = [dirname(abspath(file.file)), pwd()]
     pdk, fname = resolve_includepath(file.file, include_paths)
     sa = SpectreNetlistParser.parsefile(fname; implicit_title=false)
+    if sa.ps.errored
+        throw(LoadError(fname, 0, SpectreParseError(sa)))
+    end
     s = gensym()
     netlist = CedarSim.make_spectre_netlist(sa, include_paths)
     if file.raw
@@ -1732,7 +1738,7 @@ macro spc_str(str, flag="")
     inline = 'i' in flag
     sa = SpectreNetlistParser.parse(IOBuffer(str); enable_julia_escape)
     if sa.ps.errored
-        cedarthrow(LoadError("sa_str", 0, ""))
+        cedarthrow(LoadError("sa_str", 0, SpectreParseError(sa)))
     else
         # eval required to sequence macro definitions
         ast = CedarSim.make_spectre_netlist(sa, include_paths, [], !inline)
@@ -1747,7 +1753,7 @@ macro sp_str(str, flag="")
     sa = SpectreNetlistParser.parse(IOBuffer(str); start_lang=:spice, enable_julia_escape,
         implicit_title = !inline)
     if sa.ps.errored
-        cedarthrow(LoadError("sa_str", 0, ""))
+        cedarthrow(LoadError("sa_str", 0, SpectreParseError(sa)))
     elseif !inline
         return esc(CedarSim.make_spectre_circuit(sa, include_paths, []))
     else
@@ -1845,3 +1851,10 @@ function get_default_parameterization(ast; to_julia=SpcScope(), params = Pair[])
     end
     return params
 end
+
+struct SpectreParseError
+    sa
+end
+
+#TODO not implemented yet
+Base.show(io::IO, sap::SpectreParseError) = SpectreNetlistCSTParser.visit_errors(sap.sa; io)
