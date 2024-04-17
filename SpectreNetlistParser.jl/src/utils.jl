@@ -5,11 +5,11 @@ macro trynext(assignment)
     lhs = assignment.args[1]
     esc(quote
         $assignment
-        if $lhs isa EXPR && $lhs.form isa Error
-            return EXPR(Incomplete($exprlistname, $lhs))
-        end
         if !@isdefined($exprlistname)
             $exprlistname = EXPRList{Any}()
+        end
+        if $lhs isa EXPR && $lhs.form isa Error
+            return EXPR(Incomplete($exprlistname, $lhs))
         end
         push!($exprlistname, $lhs)
     end)
