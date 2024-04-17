@@ -402,3 +402,17 @@ function EXPR!(val::Terminal, ps)
     offset = UInt32(ps.t.startbyte - prev)
     return EXPR(fw, offset, UInt32(ps.t.endbyte - ps.t.startbyte + 1), val)
 end
+
+# Return an expanded version of terminal extending to the end of the line
+function extend_to_line_end(val::Terminal, ps)
+    start = ps.t.startbyte
+    eol(ps) && return EXPR!(val, ps) # bail if already at newline
+
+    (; off, width) = EXPR!(val, ps)
+    while !eol(ps)
+        next(ps)
+    end
+    next(ps)
+    fw = UInt32(ps.t.endbyte - start + 1)
+    return EXPR(fw, off, width, val)
+end
