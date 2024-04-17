@@ -22,16 +22,21 @@ struct JuliaEscapeBody <: Terminal; end
     StrictModeViolation,
 )
 
+abstract type AbstractASTNode end
+abstract type AbstractBlockASTNode <: AbstractASTNode end
+
 struct Error <: Terminal
     kind::ErrorKind
     expected
 end
 
+struct Incomplete <: AbstractASTNode
+    exprs::EXPRList
+    error::EXPR{Error}
+end
+
 const Maybe{T} = Union{T, Nothing}
 const EXPRErr{T} = Union{EXPR{T}, EXPR{Error}}
-
-abstract type AbstractASTNode end
-abstract type AbstractBlockASTNode <: AbstractASTNode end
 
 @generated function EXPRS.allchildren(x::AbstractASTNode)
     expr = Expr(:tuple)
@@ -656,15 +661,16 @@ function EXPR!(val::Terminal, ps)
     return EXPR(fw, offset, UInt32(ps.t.endbyte - ps.t.startbyte + 1), val)
 end
 
-# Return an expanded version of terminal `expr` extending to the end of the line
-function extend_to_line_end(expr, ps)
-    (; fullwidth, off, width, form) = expr
-    @assert form isa Terminal
-    while !(kind(nt(ps)) in (NEWLINE, ENDMARKER))
+# Return an expanded version of terminal extending to the end of the line
+function extend_to_line_end(val::Terminal, ps)
+    eol(ps) && return EXPR!(val, ps) # bail if already at newline
+
+    (; fullwidth, off, width) = EXPR!(val, ps)
+    while !eol(ps)
         fullwidth += ps.npos - ps.pos
         next(ps)
     end
     fullwidth += ps.npos - ps.pos
-    t = next(ps)
-    return EXPR(fullwidth, off, width, form)
+    next(ps)
+    return EXPR(fullwidth, off, width, val)
 end
