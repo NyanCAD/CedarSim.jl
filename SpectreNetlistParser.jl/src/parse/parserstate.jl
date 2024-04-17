@@ -8,8 +8,8 @@ mutable struct ParseState{L <: Lexer}
     t::Token{Kind}
     nt::Token{Kind}
     startpos::UInt32
-    prevpos::UInt32
-    allpos::UInt32
+    prevpos::UInt32  # ==  t.endbyte + 1
+    allpos::UInt32   # == nt.endbyte + 1
     started::Bool
     errored::Bool
     lang_swapped::Bool

@@ -184,6 +184,8 @@ end
 
 function parse_other(ps)
     name = take_identifier(ps)
+    res = EXPRList{Any}()
+    push!(res, name)
     if is_analysis(kind(nt(ps)))
         return parse_analysis(ps, name)
     end
@@ -198,7 +200,8 @@ function parse_other(ps)
         SET => parse_set(ps, name)
         SHELL => parse_shell(ps, name)
         PARAMTEST => parse_paramtest(ps, name)
-        _ => error!(ps, UnexpectedToken)
+        #TODO this points to the token AFTER the error
+        _ => EXPR(Incomplete(res, error!(ps, UnexpectedToken)))
     end
 end
 

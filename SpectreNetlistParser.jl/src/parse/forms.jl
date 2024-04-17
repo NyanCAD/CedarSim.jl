@@ -21,16 +21,21 @@ struct NumberLiteral <: Terminal; end
     UnexpectedToken,
 )
 
+abstract type AbstractASTNode end
+abstract type AbstractBlockASTNode <: AbstractASTNode end
+
 struct Error <: Terminal
     kind::ErrorKind
     expected
 end
 
+struct Incomplete <: AbstractASTNode
+    exprs::EXPRList
+    error::EXPR{Error}
+end
+
 const Maybe{T} = Union{T, Nothing}
 const EXPRErr{T} = Union{EXPR{T}, EXPR{Error}}
-
-abstract type AbstractASTNode end
-abstract type AbstractBlockASTNode <: AbstractASTNode end
 
 @generated function EXPRS.allchildren(x::AbstractASTNode)
     expr = Expr(:tuple)
@@ -405,7 +410,7 @@ end
 
 # Return an expanded version of terminal extending to the end of the line
 function extend_to_line_end(val::Terminal, ps)
-    start = ps.t.startbyte
+    start = ps.t.endbyte + 1
     eol(ps) && return EXPR!(val, ps) # bail if already at newline
 
     (; off, width) = EXPR!(val, ps)
