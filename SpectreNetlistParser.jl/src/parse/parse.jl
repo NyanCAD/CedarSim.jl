@@ -684,11 +684,13 @@ function take_builtin_const(ps)
     return EXPR!(BuiltinConst(), ps)
 end
 
-function error!(ps, kind, expected=nothing)
-    # TODO Make the errors emit error tokens and show all of the errors as in VerilogParser
+function error!(ps, kind, expected=nothing, expand=true)
     ps.errored = true
-    # debug && error("error token with kind $(nt(ps))")
-    throw(SpectreParserError(ps, kind, expected))
+    if expand
+        return extend_to_line_end(Error(kind, expected), ps)
+    else
+        return Expr!(Error(kind, expected), ps)
+    end
 end
 
 struct SpectreParserError <: Exception

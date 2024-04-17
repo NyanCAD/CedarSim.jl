@@ -1,5 +1,20 @@
 using Base.Meta
 
+const exprlistname = gensym("exprlist")
+macro trynext(assignment)
+    lhs = assignment.args[1]
+    esc(quote
+        $assignment
+        if $lhs isa EXPR && $lhs.form isa Error
+            return EXPR(Incomplete($exprlistname, $lhs))
+        end
+        if !@isdefined($exprlistname)
+            $exprlistname = EXPRList{Any}()
+        end
+        push!($exprlistname, $lhs)
+    end)
+end
+
 function mkcond(cond)
     if isexpr(cond, :call) && cond.args[1] == :(|)
         return Expr(:(||),

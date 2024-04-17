@@ -3,6 +3,7 @@
 # - Nodes can be integers
 
 import ...@case
+import ....@trynext
 
 function parse_spice_toplevel(ps)::EXPR
     @case kind(nt(ps)) begin
@@ -14,7 +15,7 @@ function parse_spice_toplevel(ps)::EXPR
     end
     if !is_ident(kind(nt(ps)))
         # TODO: This should be an "unrecognized SPICE directive/instance" error
-        return extend_to_line_end(_error!(ps, UnexpectedToken), ps)
+        return error!(ps, UnexpectedToken)
     end
     return parse_instance(ps)
 end
@@ -49,7 +50,7 @@ function parse_dot(ps, dot)
         WIDTH => parse_width(ps, dot)
         HDL => parse_hdl(ps, dot)
         # TODO: This should return an "unexpected DOT command" error
-        _ => extend_to_line_end(_error!(ps, UnexpectedToken), ps)
+        _ => error!(ps, UnexpectedToken)
     end
 end
 
@@ -305,7 +306,7 @@ function parse_node(ps)
     elseif is_ident(kind(nt(ps)))
         return EXPR(NodeName(take_identifier(ps)))
     else
-        error!(ps, UnexpectedToken)
+        error!(ps, UnexpectedToken, "node")
     end
 end
 
@@ -750,7 +751,7 @@ end
 
 function unimplemented_instance_error(ps)
     # TODO: Emit more specific "unimplemented instance" error
-    return extend_to_line_end(_error!(ps, UnexpectedToken), ps)
+    return error!(ps, UnexpectedToken)
 end
 
 # Parse an "instance" line
@@ -810,9 +811,9 @@ function parse_inductor(ps)
 end
 
 function parse_controlled(cs::Type{ControlledSource{in, out}}, ps) where {in, out}
-    name = parse_node(ps)
-    pos = parse_node(ps)
-    neg = parse_node(ps)
+    @trynext name = parse_node(ps)
+    @trynext pos = parse_node(ps)
+    @trynext neg = parse_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
 
     # Check if this is a POLY expression
@@ -851,12 +852,12 @@ function parse_controlled(cs::Type{ControlledSource{in, out}}, ps) where {in, ou
         return EXPR(cs(name, pos, neg, table_expr, nl))
     elseif in == :V
         # Standard voltage controlled source parsing
-        cpos = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
-        cneg = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
-        val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
-        params = parse_parameter_list(ps)
+        @trynext cpos = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
+        @trynext cneg = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
+        @trynext val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
+        @trynext params = parse_parameter_list(ps)
         expr = EXPR(VoltageControl(cpos, cneg, val, params))
-        nl = accept_newline(ps)
+        @trynext nl = accept_newline(ps)
         return EXPR(cs(name, pos, neg, expr, nl))
     elseif in == :C
         # Standard current controlled source parsing
@@ -1034,15 +1035,15 @@ function parse_s_parameter_element(ps)
 end
 
 function parse_switch(ps)
-    name = parse_node(ps)
-    nd1 = parse_node(ps)
-    nd2 = parse_node(ps)
-    cnd1 = parse_node(ps)
-    cnd2 = parse_node(ps)
+    @trynext name = parse_node(ps)
+    @trynext nd1 = parse_node(ps)
+    @trynext nd2 = parse_node(ps)
+    @trynext cnd1 = parse_node(ps)
+    @trynext cnd2 = parse_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, nd1, nd2, cnd1, cnd2)
-    model = parse_node(ps)
-    onoff = take_kw(ps)
-    nl = accept_newline(ps)
+    @trynext model = parse_node(ps)
+    @trynext onoff = take_kw(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Switch(name, nd1, nd2, cnd1, cnd2, model, onoff, nl))
 end
 
@@ -1051,7 +1052,7 @@ eol(ps) = (t = nt(ps); kind(t) == NEWLINE || kind(t) == ENDMARKER)
 
 function take_kw(ps)
     kwkind = kind(nt(ps))
-    @assert is_kw(kwkind)
+    is_kw(kwkind) || return error!(ps, UnexpectedToken, "keyword")
     EXPR!(Keyword(kwkind), ps)
 end
 
@@ -1112,7 +1113,7 @@ function accept_newline(ps)
     if kind(nt(ps)) in (NEWLINE, ENDMARKER)
         return EXPR!(Notation(), ps)
     else
-        return error!(ps, UnexpectedToken)
+        return error!(ps, UnexpectedToken, "newline")
     end
 end
 
@@ -1174,18 +1175,13 @@ function take_julia_escape_body(ps)
     return EXPR!(JuliaEscapeBody(), ps)
 end
 
-function _error!(ps, kind, expected=nothing)
+function error!(ps, kind, expected=nothing, expand=true)
     ps.errored = true
-    # debug && error("error token with kind $(nt(ps))")
-    # throw(SPICEParserError(ps, kind, expected))
-    return EXPR!(Error(kind, expected), ps)
-end
-
-function error!(ps, kind, expected=nothing)
-    # TODO Make the errors emit error tokens and show all of the errors as in VerilogParser
-    ps.errored = true
-    # debug && error("error token with kind $(nt(ps))")
-    throw(SPICEParserError(ps, kind, expected))
+    if expand
+        return extend_to_line_end(Error(kind, expected), ps)
+    else
+        return Expr!(Error(kind, expected), ps)
+    end
 end
 
 struct SPICEParserError <: Exception

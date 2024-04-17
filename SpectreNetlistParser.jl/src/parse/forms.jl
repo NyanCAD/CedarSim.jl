@@ -23,6 +23,7 @@ struct NumberLiteral <: Terminal; end
 
 struct Error <: Terminal
     kind::ErrorKind
+    expected
 end
 
 const Maybe{T} = Union{T, Nothing}
