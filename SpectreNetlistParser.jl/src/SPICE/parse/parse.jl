@@ -565,7 +565,7 @@ function parse_primary(ps)
         close = accept(ps, RPAREN)
         return EXPR(JuliaEscape(open, body, close))
     end
-    return error!(ps, UnexpectedToken)
+    return error!(ps, UnexpectedToken, "expression")
 end
 
 function parse_comma_list!(parse_item, ps, list)
