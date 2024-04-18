@@ -22,7 +22,7 @@ function visit_errors(sa; io=stdout, verbose=false)
             line = fullcontents(context)
             pointer = " "^start * "^"^len
             println(rstrip(line))
-            println(io, pointer)
+            printstyled(io, pointer, "\n"; color=:light_green)
             println(io, "got: $(node.expr.got)")
             if node.expr.expected !== nothing
                 println(io, "expected: $(node.expr.expected)")
