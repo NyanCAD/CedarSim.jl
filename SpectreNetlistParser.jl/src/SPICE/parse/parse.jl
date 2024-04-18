@@ -852,9 +852,9 @@ function parse_controlled(cs::Type{ControlledSource{in, out}}, ps) where {in, ou
         return EXPR(cs(name, pos, neg, table_expr, nl))
     elseif in == :V
         # Standard voltage controlled source parsing
-        @trynext cpos = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
-        @trynext cneg = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
-        @trynext val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
+        cpos = kind(nnt(ps)) == EQ ? nothing : @trynext parse_node(ps)
+        cneg = kind(nnt(ps)) == EQ ? nothing : @trynext parse_node(ps)
+        val = kind(nnt(ps)) == EQ ? nothing : @trynext parse_expression(ps)
         @trynext params = parse_parameter_list(ps)
         expr = EXPR(VoltageControl(cpos, cneg, val, params))
         @trynext nl = accept_newline(ps)
