@@ -26,7 +26,8 @@ function Base.LineNumberNode(n::SNode)
     sf = n.ps.srcfile
     lsf = sf.lineinfo
     lno_first = SpectreNetlistParser.LineNumbers.compute_line(lsf, n.startof+n.expr.off)
-    LineNumberNode(lno_first, Symbol(sf.path))
+    offset = n.ps.srcline
+    LineNumberNode(lno_first+offset, Symbol(sf.path))
 end
 
 
@@ -1736,7 +1737,8 @@ macro spc_str(str, flag="")
     include_paths = [dirname(String(__source__.file)), pwd()]
     enable_julia_escape = 'e' in flag
     inline = 'i' in flag
-    sa = SpectreNetlistParser.parse(IOBuffer(str); enable_julia_escape)
+    sa = SpectreNetlistParser.parse(IOBuffer(str);
+        fname=String(__source__.file), srcline=__source__.line, enable_julia_escape)
     if sa.ps.errored
         cedarthrow(LoadError("sa_str", 0, SpectreParseError(sa)))
     else
@@ -1750,8 +1752,9 @@ macro sp_str(str, flag="")
     include_paths = [dirname(String(__source__.file)), pwd()]
     enable_julia_escape = 'e' in flag
     inline = 'i' in flag
-    sa = SpectreNetlistParser.parse(IOBuffer(str); start_lang=:spice, enable_julia_escape,
-        implicit_title = !inline)
+    sa = SpectreNetlistParser.parse(IOBuffer(str);
+        fname=String(__source__.file), srcline=__source__.line,
+        start_lang=:spice, enable_julia_escape, implicit_title = !inline)
     if sa.ps.errored
         cedarthrow(LoadError("sa_str", 0, SpectreParseError(sa)))
     elseif !inline

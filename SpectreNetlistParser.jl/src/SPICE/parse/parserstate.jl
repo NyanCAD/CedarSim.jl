@@ -2,6 +2,7 @@ import ...SrcFile
 
 mutable struct ParseState{L <: Lexer}
     srcfile::SrcFile
+    srcline::UInt32 # line in srcfile where the SPICE code starts
     lexer::L
     tok_storage::Token{Kind} # so we can look forward one token
 
@@ -20,17 +21,17 @@ mutable struct ParseState{L <: Lexer}
     return_on_language_change::Bool
 end
 
-function ParseState(io::IOBuffer; fname::Union{AbstractString, Nothing} = nothing, return_on_language_change::Bool, enable_julia_escape::Bool=false, implicit_title::Bool=true)
+function ParseState(io::IOBuffer; fname::Union{AbstractString, Nothing} = nothing, srcline=1, return_on_language_change::Bool, enable_julia_escape::Bool=false, implicit_title::Bool=true)
     p = position(io)
     sstr = read(io, String)
     seek(io, p)
     sourcefile = SourceFile(sstr)
     srcfile = SrcFile(fname, io, sourcefile)
-    return ParseState(srcfile; return_on_language_change, enable_julia_escape, implicit_title)
+    return ParseState(srcfile; srcline, return_on_language_change, enable_julia_escape, implicit_title)
 end
 
 
-function ParseState(srcfile::SrcFile; return_on_language_change::Bool, enable_julia_escape::Bool=false, implicit_title::Bool=true)
+function ParseState(srcfile::SrcFile; srcline=1, return_on_language_change::Bool, enable_julia_escape::Bool=false, implicit_title::Bool=true)
     p = position(srcfile.contents)
     uz = UInt32(0)
     l = Lexer(srcfile.contents, ERROR, next_token; case_sensitive=false, enable_julia_escape)
@@ -38,7 +39,7 @@ function ParseState(srcfile::SrcFile; return_on_language_change::Bool, enable_ju
         # First line of any SPICE file has an implicit .TITLE
         l.last_nontriv_token = TITLE
     end
-    ps = ParseState(srcfile, l,
+    ps = ParseState(srcfile, UInt32(srcline), l,
         Token(ERROR), Token(ERROR), Token(ERROR), Token(ERROR),
         UInt32(p), uz, uz, UInt32(p),
         false,

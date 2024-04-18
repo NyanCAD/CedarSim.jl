@@ -27,6 +27,7 @@ abstract type AbstractBlockASTNode <: AbstractASTNode end
 struct Error <: Terminal
     kind::ErrorKind
     expected
+    got
 end
 
 struct Incomplete <: AbstractASTNode

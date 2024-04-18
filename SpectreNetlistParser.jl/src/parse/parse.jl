@@ -684,20 +684,20 @@ function take_builtin_const(ps)
     return EXPR!(BuiltinConst(), ps)
 end
 
-function error!(ps, kind, expected=nothing, expand=true)
+function error!(ps, errkind, expected=nothing, expand=true)
     ps.errored = true
     if !eol(ps) && expand
-        expr = EXPR!(Error(kind, expected), ps)
+        expr = EXPR!(Error(errkind, expected, kind(nt(ps))), ps)
         return extend_to_line_end(expr, ps)
     else
-        return EXPR!(Error(kind, expected), ps)
+        return EXPR!(Error(errkind, expected, kind(nt(ps))), ps)
     end
 end
 
 # turns an already parsed expression into an error expression
 function transmute_error!(ps, expr::EXPR, kind, expected=nothing, expand=true)
     ps.errored = true
-    expr = EXPR(expr.fullwidth, expr.off, expr.width, Error(kind, expected))
+    expr = EXPR(expr.fullwidth, expr.off, expr.width, Error(kind, expected, expr.form))
     if expand
         return extend_to_line_end(expr, ps)
     else
