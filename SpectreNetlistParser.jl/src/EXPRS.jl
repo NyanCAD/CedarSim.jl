@@ -52,9 +52,13 @@ Base.size(e::EXPRList) = size(e.exprs)
 Base.getindex(e::EXPRList, args...) = getindex(e.exprs, args...)
 Base.iterate(e::EXPRList, args...) = iterate(e.exprs, args...)
 allchildren(e::EXPRList) = e
-function Base.push!(e::EXPRList, arg)
+function Base.push!(e::EXPRList, arg::EXPR)
     e.fullwidth += arg.fullwidth
     push!(e.exprs, arg)
+end
+function Base.push!(e::EXPRList, arg::EXPRList)
+    e.fullwidth += arg.fullwidth
+    append!(e.exprs, arg.exprs)
 end
 function Base.pop!(e::EXPRList)
     v = pop!(e.exprs)
