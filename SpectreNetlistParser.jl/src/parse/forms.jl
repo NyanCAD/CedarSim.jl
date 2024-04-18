@@ -30,7 +30,7 @@ struct Error <: Terminal
     got
 end
 
-struct Incomplete <: AbstractASTNode
+struct Incomplete{T} <: AbstractASTNode
     exprs::EXPRList
     error::EXPR{Error}
 end

@@ -2,8 +2,7 @@
 # - Move endl inline
 # - Nodes can be integers
 
-import ...@case
-import ....@trynext
+import ...@case, ....@trynext, ....@trysetup
 
 function parse_spice_toplevel(ps)::EXPR
     @case kind(nt(ps)) begin
@@ -811,6 +810,7 @@ function parse_inductor(ps)
 end
 
 function parse_controlled(cs::Type{ControlledSource{in, out}}, ps) where {in, out}
+    @trysetup cs
     @trynext name = parse_node(ps)
     @trynext pos = parse_node(ps)
     @trynext neg = parse_node(ps)
@@ -895,6 +895,8 @@ function parse_tran_fn(ps)
 end
 
 function parse_voltage_or_current(ps, isvoltage)
+    T = isvoltage ? Voltage : Current
+    @trysetup T
     @trynext name = parse_node(ps)
     @trynext pos = parse_node(ps)
     @trynext neg = parse_node(ps)
@@ -925,7 +927,6 @@ function parse_voltage_or_current(ps, isvoltage)
         end
     end
     @trynext nl = accept_newline(ps)
-    T = isvoltage ? Voltage : Current
     return EXPR(T(name, pos, neg, vals, nl))
 end
 
@@ -1036,6 +1037,7 @@ function parse_s_parameter_element(ps)
 end
 
 function parse_switch(ps)
+    @trysetup Switch
     @trynext name = parse_node(ps)
     @trynext nd1 = parse_node(ps)
     @trynext nd2 = parse_node(ps)
