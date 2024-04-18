@@ -7,11 +7,11 @@ function visit_errors(sa; io=stdout, verbose=false)
     print("\n")
     for node in PreOrderDFS(sa)
         if node isa SC.Node{<:Union{SC.Error, SP.Error}}
-            start = 0
+            start = node.expr.off
             len = node.expr.width
             if node.parent isa SC.Node{<:Union{SC.Incomplete, SP.Incomplete}}
                 context = node.parent
-                start =  context.expr.fullwidth - node.expr.fullwidth
+                start += context.expr.fullwidth - node.expr.fullwidth
             else
                 context = node
             end
