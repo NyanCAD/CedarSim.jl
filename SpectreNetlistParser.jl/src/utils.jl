@@ -3,7 +3,7 @@ using Base.Meta
 const exprlistname = gensym("exprlist")
 macro trynext(assignment)
     if assignment.head !== :(=)
-        assignment = Expr(:(=), gensym())
+        assignment = Expr(:(=), gensym(), assignment)
     end
     lhs = assignment.args[1]
     esc(quote
