@@ -306,7 +306,7 @@ function parse_node(ps)
     elseif is_ident(kind(nt(ps)))
         return EXPR(NodeName(take_identifier(ps)))
     else
-        error!(ps, UnexpectedToken, "node")
+        error!(ps, UnexpectedToken, "circuit node")
     end
 end
 
@@ -895,35 +895,36 @@ function parse_tran_fn(ps)
 end
 
 function parse_voltage_or_current(ps, isvoltage)
-    name = parse_node(ps)
-    pos = parse_node(ps)
-    neg = parse_node(ps)
+    @trynext name = parse_node(ps)
+    @trynext pos = parse_node(ps)
+    @trynext neg = parse_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
     vals = EXPRList{Union{ACSource, DCSource, TranSource}}()
     while !eol(ps)
         if kind(nt(ps)) == DC
-            dc = take_kw(ps, DC)
+            @trynext dc = take_kw(ps, DC)
             eq = if kind(nt(ps)) == EQ
-                take(ps, EQ)
+                @trynext take(ps, EQ)
             end
-            expr = parse_expression(ps)
+            @trynext expr = parse_expression(ps)
             push!(vals, EXPR(DCSource(dc, eq, expr)))
         elseif kind(nt(ps)) == AC
-            ac = take_kw(ps, AC)
+            @trynext ac = take_kw(ps, AC)
             eq = if kind(nt(ps)) == EQ
-                take(ps, EQ)
+                @trynext take(ps, EQ)
             end
-            expr = parse_expression(ps)
+            @trynext expr = parse_expression(ps)
             # TODO Phase
             push!(vals, EXPR(ACSource(ac, eq, expr)))
         elseif is_source_type(kind(nt(ps)))
-            push!(vals, parse_tran_fn(ps))
+            @trynext fn = parse_tran_fn(ps)
+            push!(vals, fn)
         else
-            expr = parse_expression(ps)
+            @trynext expr = parse_expression(ps)
             push!(vals, EXPR(DCSource(nothing, nothing, expr)))
         end
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     T = isvoltage ? Voltage : Current
     return EXPR(T(name, pos, neg, vals, nl))
 end

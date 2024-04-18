@@ -2,6 +2,9 @@ using Base.Meta
 
 const exprlistname = gensym("exprlist")
 macro trynext(assignment)
+    if assignment.head !== :(=)
+        assignment = Expr(:(=), gensym())
+    end
     lhs = assignment.args[1]
     esc(quote
         $assignment
@@ -12,6 +15,7 @@ macro trynext(assignment)
             return EXPR(Incomplete($exprlistname, $lhs))
         end
         push!($exprlistname, $lhs)
+        $lhs
     end)
 end
 
