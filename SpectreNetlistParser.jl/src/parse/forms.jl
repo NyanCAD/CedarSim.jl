@@ -409,15 +409,13 @@ function EXPR!(val::Terminal, ps)
 end
 
 # Return an expanded version of terminal extending to the end of the line
-function extend_to_line_end(val::Terminal, ps)
-    start = ps.t.endbyte + 1
-    eol(ps) && return EXPR!(val, ps) # bail if already at newline
-
-    (; off, width) = EXPR!(val, ps)
+function extend_to_line_end(val::EXPR{<:Terminal}, ps)
+    (; fullwidth, off, width, form) = val
     while !eol(ps)
+        fullwidth += ps.allpos - ps.prevpos
         next(ps)
     end
+    fullwidth += ps.allpos - ps.prevpos
     next(ps)
-    fw = UInt32(ps.t.endbyte - start + 1)
-    return EXPR(fw, off, width, val)
+    return EXPR(fullwidth, off, width, form)
 end

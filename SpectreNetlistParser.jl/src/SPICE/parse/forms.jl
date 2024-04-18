@@ -662,15 +662,13 @@ function EXPR!(val::Terminal, ps)
 end
 
 # Return an expanded version of terminal extending to the end of the line
-function extend_to_line_end(val::Terminal, ps)
-    eol(ps) && return EXPR!(val, ps) # bail if already at newline
-
-    (; fullwidth, off, width) = EXPR!(val, ps)
+function extend_to_line_end(val::EXPR{<:Terminal}, ps)
+    (; fullwidth, off, width, form) = val
     while !eol(ps)
         fullwidth += ps.npos - ps.pos
         next(ps)
     end
     fullwidth += ps.npos - ps.pos
     next(ps)
-    return EXPR(fullwidth, off, width, val)
+    return EXPR(fullwidth, off, width, form)
 end

@@ -184,8 +184,6 @@ end
 
 function parse_other(ps)
     name = take_identifier(ps)
-    res = EXPRList{Any}()
-    push!(res, name)
     if is_analysis(kind(nt(ps)))
         return parse_analysis(ps, name)
     end
@@ -200,8 +198,7 @@ function parse_other(ps)
         SET => parse_set(ps, name)
         SHELL => parse_shell(ps, name)
         PARAMTEST => parse_paramtest(ps, name)
-        #TODO this points to the token AFTER the error
-        _ => EXPR(Incomplete(res, error!(ps, UnexpectedToken)))
+        _ => transmute_error!(ps, name, UnexpectedToken)
     end
 end
 
@@ -689,10 +686,22 @@ end
 
 function error!(ps, kind, expected=nothing, expand=true)
     ps.errored = true
-    if expand
-        return extend_to_line_end(Error(kind, expected), ps)
+    if !eol(ps) && expand
+        expr = EXPR!(Error(kind, expected), ps)
+        return extend_to_line_end(expr, ps)
     else
-        return Expr!(Error(kind, expected), ps)
+        return EXPR!(Error(kind, expected), ps)
+    end
+end
+
+# turns an already parsed expression into an error expression
+function transmute_error!(ps, expr::EXPR, kind, expected=nothing, expand=true)
+    ps.errored = true
+    expr = EXPR(expr.fullwidth, expr.off, expr.width, Error(kind, expected))
+    if expand
+        return extend_to_line_end(expr, ps)
+    else
+        return expr
     end
 end
 
