@@ -2,6 +2,7 @@ import ..SrcFile
 
 mutable struct ParseState{L <: Lexer}
     srcfile::SrcFile
+    srcline::UInt32 # line in srcfile where the Spectre code starts
     lexer::L
     tok_storage::Token{Kind} # so we can look forward one token
 
@@ -15,14 +16,15 @@ mutable struct ParseState{L <: Lexer}
     lang_swapped::Bool
 end
 
-function ParseState(io::IOBuffer; fname = nothing, enable_julia_escape::Bool=false)
+function ParseState(io::IOBuffer; fname = nothing, srcline=1, enable_julia_escape::Bool=false)
     uz = UInt32(0)
     p = position(io)
     sstr = read(io, String)
     seek(io, p)
     sourcefile = SourceFile(sstr)
 
-    ps = ParseState(SrcFile(fname, io, sourcefile), tokenize(io, ERROR, next_token; enable_julia_escape),
+    ps = ParseState(SrcFile(fname, io, sourcefile), UInt32(srcline),
+        tokenize(io, ERROR, next_token; enable_julia_escape),
         Token(ERROR), Token(ERROR), Token(ERROR),
         UInt32(p), uz, UInt32(p),
         false,

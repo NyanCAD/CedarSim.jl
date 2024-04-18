@@ -15,6 +15,7 @@ using ..RedTree
 include("forms.jl")
 include("parserstate.jl")
 include("parse.jl")
+include("errors.jl")
 
 function parse(str::AbstractString; offset=0, kwargs...)
     io = IOBuffer(str)
@@ -23,7 +24,7 @@ function parse(str::AbstractString; offset=0, kwargs...)
 end
 parsefile(fname::AbstractString; kwargs...) = parse(String(open(read, fname)); fname, kwargs...)
 
-function parse(io::IOBuffer; fname=nothing, start_lang=nothing, enable_julia_escape::Bool=false, implicit_title::Bool=true)
+function parse(io::IOBuffer; fname=nothing, srcline=1, start_lang=nothing, enable_julia_escape::Bool=false, implicit_title::Bool=true)
     if start_lang === nothing
         start_lang = if fname === nothing
             :spectre
@@ -37,13 +38,14 @@ function parse(io::IOBuffer; fname=nothing, start_lang=nothing, enable_julia_esc
         end
     end
 
-    ps = ParseState(io; fname)
+    ps = ParseState(io; fname, srcline)
     parse(ps; start_lang, enable_julia_escape, implicit_title)
 end
 
 function transition_from_spice!(ps::ParseState, ps_spice)
     p = position(ps_spice)
     seek(ps.srcfile.contents, p)
+    ps.errored |= ps_spice.errored
     reinit_at_pos!(ps, p)
 end
 

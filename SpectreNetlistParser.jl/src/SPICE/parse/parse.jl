@@ -1175,13 +1175,13 @@ function take_julia_escape_body(ps)
     return EXPR!(JuliaEscapeBody(), ps)
 end
 
-function error!(ps, kind, expected=nothing, expand=true)
+function error!(ps, errkind, expected=nothing, expand=true)
     ps.errored = true
     if !eol(ps) && expand
-        expr = EXPR!(Error(kind, expected), ps)
+        expr = EXPR!(Error(errkind, expected, kind(nt(ps))), ps)
         return extend_to_line_end(expr, ps)
     else
-        return EXPR!(Error(kind, expected), ps)
+        return EXPR!(Error(errkind, expected, kind(nt(ps))), ps)
     end
 end
 
