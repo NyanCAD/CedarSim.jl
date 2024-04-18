@@ -1177,10 +1177,11 @@ end
 
 function error!(ps, kind, expected=nothing, expand=true)
     ps.errored = true
-    if expand
-        return extend_to_line_end(Error(kind, expected), ps)
+    if !eol(ps) && expand
+        expr = EXPR!(Error(kind, expected), ps)
+        return extend_to_line_end(expr, ps)
     else
-        return Expr!(Error(kind, expected), ps)
+        return EXPR!(Error(kind, expected), ps)
     end
 end
 
