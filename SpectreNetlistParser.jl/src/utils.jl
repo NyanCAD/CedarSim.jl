@@ -1,6 +1,13 @@
 using Base.Meta
 
 const exprlistname = gensym("exprlist")
+const exprtypename = gensym("exprtype")
+macro trysetup(type)
+    esc(quote
+        $exprlistname = EXPRList{Any}()
+        $exprtypename = $type
+    end)
+end
 macro trynext(assignment)
     if assignment.head !== :(=)
         assignment = Expr(:(=), gensym(), assignment)
@@ -8,11 +15,8 @@ macro trynext(assignment)
     lhs = assignment.args[1]
     esc(quote
         $assignment
-        if !@isdefined($exprlistname)
-            $exprlistname = EXPRList{Any}()
-        end
         if $lhs isa EXPR && $lhs.form isa Error
-            return EXPR(Incomplete($exprlistname, $lhs))
+            return EXPR(Incomplete{$exprtypename}($exprlistname, $lhs))
         end
         push!($exprlistname, $lhs)
         $lhs

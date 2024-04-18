@@ -9,15 +9,17 @@ function visit_errors(sa; io=stdout, verbose=false)
         if node isa SC.Node{<:Union{SC.Error, SP.Error}}
             start = node.expr.off
             len = node.expr.width
+            printstyled(io, "ERROR: ", bold=true, color=:red)
+            print(io, "unexpected token")
             if node.parent isa SC.Node{<:Union{SC.Incomplete, SP.Incomplete}}
                 context = node.parent
+                print(io, " while parsing a ", nameof(typeof(context.expr.form).parameters[1]))
                 start += context.expr.fullwidth - node.expr.fullwidth
             else
                 context = node
             end
+            println(io, ":")
             lnn = LineNumberNode(context)
-            printstyled(io, "ERROR: ", bold=true, color=:red)
-            println(io, "unexpected token:")
             println(io, lnn.file, ":", lnn.line, ":")
             line = fullcontents(context)
             pointer = " "^start * "^"^len
