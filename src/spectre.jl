@@ -26,7 +26,7 @@ function Base.LineNumberNode(n::SNode)
     sf = n.ps.srcfile
     lsf = sf.lineinfo
     lno_first = SpectreNetlistParser.LineNumbers.compute_line(lsf, n.startof+n.expr.off)
-    offset = n.ps.srcline
+    offset = n.ps.srcline #TODO weed out the off-by-one errors
     LineNumberNode(lno_first+offset, Symbol(sf.path))
 end
 
