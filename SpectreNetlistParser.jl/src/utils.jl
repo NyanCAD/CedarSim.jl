@@ -15,7 +15,7 @@ macro trynext(assignment)
     lhs = assignment.args[1]
     esc(quote
         $assignment
-        if $lhs isa EXPR && $lhs.form isa Error
+        if $lhs isa EXPR && ($lhs.form isa Error || $lhs.form isa Incomplete)
             return EXPR(Incomplete{$exprtypename}($exprlistname, $lhs))
         end
         push!($exprlistname, $lhs)
