@@ -19,6 +19,7 @@ struct NumberLiteral <: Terminal; end
 
 @enum(ErrorKind,
     UnexpectedToken,
+    UnknownStatement,
 )
 
 abstract type AbstractASTNode end
