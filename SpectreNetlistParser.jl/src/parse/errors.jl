@@ -9,16 +9,23 @@ function visit_errors(sa; io=stdout, verbose=false)
         if node isa SC.Node{<:Union{SC.Error, SP.Error}}
             start = node.expr.off
             len = node.expr.width
-            printstyled(io, "ERROR: ", bold=true, color=:red)
-            print(io, "unexpected token")
             if node.parent isa SC.Node{<:Union{SC.Incomplete, SP.Incomplete}}
                 context = node.parent
-                print(io, " while parsing a ", nameof(typeof(context.expr.form).parameters[1]))
                 start += context.expr.fullwidth - node.expr.fullwidth
             else
                 context = node
             end
-            println(io, ":")
+            if node.expr.kind in (SC.UnexpectedToken, SP.UnexpectedToken)
+                printstyled(io, "ERROR: ", bold=true, color=:red)
+                print(io, "unexpected token")
+                if node.parent isa SC.Node{<:Union{SC.Incomplete, SP.Incomplete}}
+                    print(io, " while parsing a ", nameof(typeof(context.expr.form).parameters[1]))
+                end
+                println(io, ":")
+            elseif  node.expr.kind == SC.UnknownStatement
+                printstyled(io, "ERROR: ", bold=true, color=:red)
+                println(io, "unknown named statement. If you intended to create an instance, add parentheses around the net names")
+            end
             lnn = LineNumberNode(context)
             println(io, lnn.file, ":", lnn.line, ":")
             line = fullcontents(context)

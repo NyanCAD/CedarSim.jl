@@ -1738,7 +1738,8 @@ macro spc_str(str, flag="")
     enable_julia_escape = 'e' in flag
     inline = 'i' in flag
     sa = SpectreNetlistParser.parse(IOBuffer(str);
-        fname=String(__source__.file), srcline=__source__.line, enable_julia_escape)
+        fname=String(__source__.file), srcline=__source__.line,
+        start_lang=:spectre, enable_julia_escape)
     if sa.ps.errored
         cedarthrow(LoadError("sa_str", 0, SpectreParseError(sa)))
     else
