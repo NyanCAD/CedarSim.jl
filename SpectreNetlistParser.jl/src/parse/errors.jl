@@ -8,13 +8,12 @@ function visit_errors(sa; io=stdout, verbose=false)
     for node in PreOrderDFS(sa)
         if node isa SC.Node{<:Union{SC.Error, SP.Error}}
             start = node.expr.off
-            len = node.expr.width
-            if node.parent isa SC.Node{<:Union{SC.Incomplete, SP.Incomplete}}
-                context = node.parent
-                start += context.expr.fullwidth - node.expr.fullwidth
-            else
-                context = node
+            len = max(node.expr.width, 1)
+            context = node
+            while context.parent isa SC.Node{<:Union{SC.Incomplete, SP.Incomplete}}
+                context = context.parent
             end
+            start += context.expr.fullwidth - node.expr.fullwidth
             if node.expr.kind in (SC.UnexpectedToken, SP.UnexpectedToken)
                 printstyled(io, "ERROR: ", bold=true, color=:red)
                 print(io, "unexpected token")

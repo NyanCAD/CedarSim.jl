@@ -1,4 +1,4 @@
-import ..AbstractTerminal, ..isunit
+import ..AbstractTerminal, ..isunit, ..iserror
 abstract type Terminal <: AbstractTerminal end
 EXPRS.allchildren(::Terminal) = ()
 
@@ -30,10 +30,12 @@ struct Error <: Terminal
     expected
     got
 end
+iserror(::Error) = true
+Base.String(node::RedTree.Node{Error}) = RedTree.tailcontents(node)
 
 struct Incomplete{T} <: AbstractASTNode
     exprs::EXPRList
-    error::EXPR{Error}
+    error::EXPR{<:Union{Error, Incomplete}}
 end
 
 const Maybe{T} = Union{T, Nothing}

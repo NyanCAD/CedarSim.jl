@@ -3,7 +3,7 @@ module RedTree
 using AbstractTrees
 using ..EXPRS
 
-import ..AbstractTerminal, ..isunit, ..istitle
+import ..AbstractTerminal, ..isunit, ..istitle, ..iserror
 
 export Node, NodeList, print_contents, fullcontents, reducedcontent
 
@@ -57,6 +57,13 @@ function fullcontents(n::Node)
     return String(take!(buf))
 end
 
+function tailcontents(n::Node)
+    buf = IOBuffer()
+    print_vr = (n.startof+n.expr.off):(n.startof+n.expr.fullwidth-1)
+    print_contents(buf, n.ps, first(print_vr), last(print_vr))
+    return String(take!(buf))
+end
+
 is_newline(node) = all(x->x∈('\r','\n'),String(node))
 is_implicit_title(node) = istitle(node.expr.form) && node.dot === nothing
 
@@ -66,7 +73,11 @@ function reducedcontent(n::Node)
     for node in Leaves(n)
         node === nothing && continue
         # TODO: Hack for not having a UnitfulNumericalValue
-        if !(isunit(node.expr.form) || is_implicit_title(AbstractTrees.parent(node)) || is_newline(node))
+        if !(pn === nothing ||
+             isunit(node.expr.form) ||
+             is_implicit_title(AbstractTrees.parent(node)) ||
+             is_newline(node) ||
+             iserror(pn.expr.form))
             print(buf, " ")
         end
         print(buf, String(node))

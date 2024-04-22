@@ -3,6 +3,7 @@ module SpectreNetlistParser
 abstract type AbstractTerminal end
 isunit(x) = false
 istitle(x) = false
+iserror(x) = false
 
 include("Tries.jl")
 include("LineNumbers.jl")
