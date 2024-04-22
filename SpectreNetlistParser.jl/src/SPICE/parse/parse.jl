@@ -323,11 +323,15 @@ function parse_node_list!(nodes, ps)
 end
 
 
-function parse_hierarchial_node(ps, name=parse_node(ps))
+function parse_hierarchial_node(ps, name=nothing)
+    @trysetup HierarchialNode
+    if name === nothing
+        @trynext name = parse_node(ps)
+    end
     subnodes = EXPRList{SubNode}()
     while kind(nt(ps)) == DOT
-        dot = take(ps, DOT)
-        subnode = parse_node(ps)
+        @trynext dot = take(ps, DOT)
+        @trynext subnode = parse_node(ps)
         push!(subnodes, EXPR(SubNode(dot, subnode)))
     end
     return EXPR(HierarchialNode(name, subnodes))
@@ -799,13 +803,14 @@ function parse_julia_device(ps, name, nodes...)
 end
 
 function parse_inductor(ps)
-    name = parse_hierarchial_node(ps)
-    pos = parse_hierarchial_node(ps)
-    neg = parse_hierarchial_node(ps)
+    @trysetup Inductor
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext pos = parse_hierarchial_node(ps)
+    @trynext neg = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
-    val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    val = kind(nnt(ps)) == EQ ? nothing : @trynext parse_expression(ps)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Inductor(name, pos, neg, val, params, nl))
 end
 

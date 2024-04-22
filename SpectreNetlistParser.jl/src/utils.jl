@@ -9,7 +9,7 @@ macro trysetup(type)
     end)
 end
 macro trynext(assignment)
-    if assignment.head !== :(=)
+    if !(assignment isa Expr) || assignment.head !== :(=)
         assignment = Expr(:(=), gensym(), assignment)
     end
     lhs = assignment.args[1]

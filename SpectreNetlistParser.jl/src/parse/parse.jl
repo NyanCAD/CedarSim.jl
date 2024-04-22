@@ -1,5 +1,5 @@
 
-import ..@case
+import ..@case, ..@trynext, ..@trysetup
 
 function parse_spectrenetlist_source(ps)::EXPR
     ex = @case kind(nt(ps)) begin
@@ -152,12 +152,13 @@ function parse_paramtest(ps, name)
 end
 
 function parse_node(ps)
+    @trysetup SNode
     subckts = EXPRList{SubcktNode}()
-    id = take_node(ps)
+    @trynext id = take_node(ps)
     while kind(nt(ps)) == DOT
-        dot = take(ps, DOT)
+        @trynext dot = take(ps, DOT)
         push!(subckts, EXPR(SubcktNode(id, dot)))
-        id = take_node(ps)
+        @trynext id = take_node(ps)
     end
     return EXPR(SNode(subckts, id))
 end
@@ -348,32 +349,36 @@ function parse_analysis(ps, name, nodelist=nothing)
 end
 
 function parse_instance(ps, name)
-    lparen = accept(ps, LPAREN) # TODO: parenthesis are optional
-    nodes = parse_nodes(ps)
-    rparen = accept(ps, RPAREN)
+    @trysetup Instance
+    @trynext name
+    @trynext lparen = accept(ps, LPAREN) # TODO: parenthesis are optional
+    @trynext nodes = parse_nodes(ps)
+    @trynext rparen = accept(ps, RPAREN)
     nodelist = EXPR(SNodeList(lparen, nodes, rparen))
     if is_analysis(kind(nt(ps)))
         return parse_analysis(ps, name, nodelist)
     end
-    master = take_identifier(ps)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trynext master = take_identifier(ps)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Instance(name, nodelist, master, params, nl))
 end
 
 function parse_nodes(ps)
+    @trysetup SNode
     nodes = EXPRList{SNode}()
     while kind(nt(ps)) != RPAREN && !eol(ps)
-        id = parse_node(ps)
+        id = @trynext parse_node(ps)
         push!(nodes, id)
     end
     return nodes
 end
 
 function parse_parameter_list(ps)
+    @trysetup Parameter
     parameters = EXPRList{Parameter}()
     while !eol(ps)
-        p = parse_parameter(ps)
+        @trynext p = parse_parameter(ps)
         push!(parameters, p)
     end
     return parameters
@@ -382,16 +387,18 @@ end
 eol(ps) = (t = nt(ps); kind(t) == NEWLINE || kind(t) == ENDMARKER)
 
 function parse_parameter(ps)
-    name = take_identifier(ps)
-    eq = accept(ps, EQ)
-    val = parse_expression(ps)
+    @trysetup Parameter
+    @trynext name = take_identifier(ps)
+    @trynext eq = accept(ps, EQ)
+    @trynext val = parse_expression(ps)
     return EXPR(Parameter(name, eq, val))
 end
 
 function parse_parameters(ps)
-    kw = accept_kw(ps, PARAMETERS)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trysetup Parameters
+    @trynext kw = accept_kw(ps, PARAMETERS)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Parameters(kw, params, nl))
 end
 
@@ -622,12 +629,14 @@ function accept_identifier(ps)
     end
 end
 
+token_names(tkind) = join(string.(tkind), ", ")
+
 function accept(ps, tkind)
     !isa(tkind, Tuple) && (tkind = (tkind,))
     if kind(nt(ps)) in tkind
         return EXPR!(Notation(), ps)
     else
-        return error!(ps, UnexpectedToken)
+        return error!(ps, UnexpectedToken, token_names(tkind))
     end
 end
 
@@ -635,7 +644,7 @@ function accept_newline(ps)
     if kind(nt(ps)) in (NEWLINE, ENDMARKER)
         return EXPR!(Notation(), ps)
     else
-        return error!(ps, UnexpectedToken)
+        return error!(ps, UnexpectedToken, "newline")
     end
 end
 
@@ -646,7 +655,7 @@ function accept_kw(ps, tkind)
     if kwkind in tkind
         return EXPR!(Keyword(kwkind), ps)
     else
-        return error!(ps, UnexpectedToken)
+        return error!(ps, UnexpectedToken, token_names(tkind))
     end
 end
 

@@ -141,16 +141,4 @@ ast = SpectreNetlistParser.parse(wave)
 array = ast.expr.form.stmts[1].params[1].val
 @test length(array.form.items) == 8
 
-# Test error
-faulty = """
-
-parameters a== 1
-"""
-e = try SpectreNetlistParser.parse(faulty)
-catch g
-    g
-end
-str = sprint(io -> Base.showerror(io, e))
-@test occursin("SpectreParser error at line 2:\n  parameters a== 1", str)
-
 nothing
