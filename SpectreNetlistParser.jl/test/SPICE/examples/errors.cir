@@ -1,0 +1,5 @@
+* make sure incomplete devices don't drop tokens
+r1 a
+c1 b
+l1 a
+x1 c
