@@ -824,7 +824,7 @@ and is used for all spice instances except subcircuits.
 """
 function spice_instance(to_julia, ports, name, model, parameters; kwargs...)
     nets = map(ports) do node
-        get_net!(to_julia, LString(node.name))
+        get_net!(to_julia, LString(node))
     end
 
     fsym = model
@@ -882,7 +882,7 @@ It also takes care to peel off a layer of the parameter lens.
 """
 function subckt_instance(to_julia, ports, name, model, parameters)
     nets = map(ports) do node
-        get_net!(to_julia, LString(node.name))
+        get_net!(to_julia, LString(node))
     end
 
     fsym = Symbol("@ckt_", lowercase(String(model)))
