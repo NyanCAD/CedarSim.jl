@@ -358,13 +358,13 @@ end
 function parse_subckt(ps, dot)
     kw = take_kw(ps, SUBCKT)
     name = take_identifier_or_number(ps)
-    nodes = EXPRList{NodeName}()
+    nodes = EXPRList{HierarchialNode}()
     parameters = EXPRList{Parameter}()
     while !eol(ps)
         if kind(nnt(ps)) == EQ
             parse_parameter_list!(parameters, ps)
         else
-            push!(nodes, parse_node(ps))
+            push!(nodes, parse_hierarchial_node(ps))
         end
     end
     nl = accept_newline(ps)
@@ -714,7 +714,7 @@ end
 
 function parse_global(ps, dot)
     kw = take_kw(ps, GLOBAL)
-    nodes = parse_node_list(ps)
+    nodes = parse_hierarchial_node_list(ps)
     nl = accept_newline(ps)
     return EXPR(GlobalStatement(dot, kw, nodes, nl))
 end
@@ -799,9 +799,9 @@ function parse_julia_device(ps, name, nodes...)
 end
 
 function parse_inductor(ps)
-    name = parse_node(ps)
-    pos = parse_node(ps)
-    neg = parse_node(ps)
+    name = parse_hierarchial_node(ps)
+    pos = parse_hierarchial_node(ps)
+    neg = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
     val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
     params = parse_parameter_list(ps)
@@ -811,9 +811,9 @@ end
 
 function parse_controlled(cs::Type{ControlledSource{in, out}}, ps) where {in, out}
     @trysetup cs
-    @trynext name = parse_node(ps)
-    @trynext pos = parse_node(ps)
-    @trynext neg = parse_node(ps)
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext pos = parse_hierarchial_node(ps)
+    @trynext neg = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
 
     # Check if this is a POLY expression
@@ -871,9 +871,9 @@ function parse_controlled(cs::Type{ControlledSource{in, out}}, ps) where {in, ou
 end
 
 function parse_behavioral(ps)
-    name = parse_node(ps)
-    pos = parse_node(ps)
-    neg = parse_node(ps)
+    name = parse_hierarchial_node(ps)
+    pos = parse_hierarchial_node(ps)
+    neg = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
     params = parse_parameter_list(ps)
     nl = accept_newline(ps)
@@ -897,9 +897,9 @@ end
 function parse_voltage_or_current(ps, isvoltage)
     T = isvoltage ? Voltage : Current
     @trysetup T
-    @trynext name = parse_node(ps)
-    @trynext pos = parse_node(ps)
-    @trynext neg = parse_node(ps)
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext pos = parse_hierarchial_node(ps)
+    @trynext neg = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
     vals = EXPRList{Union{ACSource, DCSource, TranSource}}()
     while !eol(ps)
@@ -931,32 +931,28 @@ function parse_voltage_or_current(ps, isvoltage)
 end
 
 
-function convert_node_expr_to_identifier(node::EXPR{NodeName})
-    return EXPR{Identifier}(node.fullwidth, node.off, node.width, node.name.form)
-end
-
 function parse_bipolar_transistor(ps)
-    name = parse_node(ps)
-    c = parse_node(ps)
-    b = parse_node(ps)
-    e = parse_node(ps)
+    name = parse_hierarchial_node(ps)
+    c = parse_hierarchial_node(ps)
+    b = parse_hierarchial_node(ps)
+    e = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, c, b, e)
-    s = parse_node(ps) # or model
+    s = parse_hierarchial_node(ps) # or model
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, c, b, e, s)
     if is_ident(kind(nt(ps)))
-        model = take_identifier(ps)
-        if kind(nt(ps)) == EQ
-            param_name = model
-            model = convert_node_expr_to_identifier(s)
+        if kind(nnt(ps)) == EQ
+            param_name = take_identifier(ps)
+            model = s
             s = nothing
             params = EXPRList{Parameter}()
             push!(params, parse_parameter(ps, param_name))
             parse_parameter_list!(params, ps)
         else
+            model = parse_hierarchial_node(ps)
             params = parse_parameter_list(ps)
         end
     else
-        model = convert_node_expr_to_identifier(s)
+        model = s
         s = nothing
         params = EXPRList{Parameter}()
     end
@@ -965,72 +961,75 @@ function parse_bipolar_transistor(ps)
 end
 
 function parse_capacitor(ps)
-    name = parse_node(ps)
-    pos = parse_node(ps)
-    neg = parse_node(ps)
+    @trysetup Capacitor
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext pos = parse_hierarchial_node(ps)
+    @trynext neg = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
-    val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    val = kind(nnt(ps)) == EQ ? nothing : @trynext parse_expression(ps)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Capacitor(name, pos, neg, val, params, nl))
 end
 
 
 function parse_diode(ps)
-    name = parse_node(ps)
-    pos = parse_node(ps)
-    neg = parse_node(ps)
+    name = parse_hierarchial_node(ps)
+    pos = parse_hierarchial_node(ps)
+    neg = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
 
-    model = take_identifier(ps)
+    model = parse_hierarchial_node(ps)
     params = parse_parameter_list(ps)
     nl = accept_newline(ps)
     return EXPR(Diode(name, pos, neg, model, params, nl))
 end
 
 function parse_resistor(ps)
-    name = parse_node(ps)
-    pos = parse_node(ps)
-    neg = parse_node(ps)
+    @trysetup Resistor
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext pos = parse_hierarchial_node(ps)
+    @trynext neg = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
-    val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    val = kind(nnt(ps)) == EQ ? nothing : @trynext parse_expression(ps)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Resistor(name, pos, neg, val, params, nl))
 end
 
 
 function parse_mosfet(ps)
-    name = parse_node(ps)
-    d = parse_node(ps)
-    g = parse_node(ps)
-    s = parse_node(ps)
-    b = parse_node(ps)
+    name = parse_hierarchial_node(ps)
+    d = parse_hierarchial_node(ps)
+    g = parse_hierarchial_node(ps)
+    s = parse_hierarchial_node(ps)
+    b = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, d, g, s, b)
-    model = parse_node(ps)
+    model = parse_hierarchial_node(ps)
     parameters = parse_parameter_list(ps)
     nl = accept_newline(ps)
     return EXPR(MOSFET(name, d, g, s, b, model, parameters, nl))
 end
 
 function parse_subckt_call(ps)
-    name = parse_node(ps)
-    nodes = EXPRList{NodeName}()
+    @trysetup SubcktCall
+    @trynext name = parse_hierarchial_node(ps)
+    nodes = EXPRList{HierarchialNode}()
     while kind(nnt(ps)) !== EQ && kind(nt(ps)) !== NEWLINE && kind(nt(ps)) !== JULIA_ESCAPE_BEGIN
-        push!(nodes, parse_node(ps))
+        push!(nodes, @trynext parse_hierarchial_node(ps))
     end
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, nodes...)
     model = pop!(nodes)
-    parameters = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trynext parameters = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(SubcktCall(name, nodes, model, parameters, nl))
 end
 
 function parse_s_parameter_element(ps)
-    name = parse_node(ps)
-    nd1 = parse_node(ps)
-    nd2 = parse_node(ps)
-    model = parse_node(ps)
+    name = parse_hierarchial_node(ps)
+    nd1 = parse_hierarchial_node(ps)
+    nd2 = parse_hierarchial_node(ps)
+    model = parse_hierarchial_node(ps)
     parameters = parse_parameter_list(ps)
     nl = accept_newline(ps)
     return EXPR(SParameterElement(name, nd1, nd2, model, parameters, nl))
@@ -1038,13 +1037,13 @@ end
 
 function parse_switch(ps)
     @trysetup Switch
-    @trynext name = parse_node(ps)
-    @trynext nd1 = parse_node(ps)
-    @trynext nd2 = parse_node(ps)
-    @trynext cnd1 = parse_node(ps)
-    @trynext cnd2 = parse_node(ps)
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext nd1 = parse_hierarchial_node(ps)
+    @trynext nd2 = parse_hierarchial_node(ps)
+    @trynext cnd1 = parse_hierarchial_node(ps)
+    @trynext cnd2 = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, nd1, nd2, cnd1, cnd2)
-    @trynext model = parse_node(ps)
+    @trynext model = parse_hierarchial_node(ps)
     @trynext onoff = take_kw(ps)
     @trynext nl = accept_newline(ps)
     return EXPR(Switch(name, nd1, nd2, cnd1, cnd2, model, onoff, nl))

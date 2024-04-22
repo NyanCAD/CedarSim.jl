@@ -123,7 +123,7 @@ end
 struct GlobalStatement <: AbstractASTNode
     dot::EXPR{Notation}
     kw::EXPR{Keyword}
-    nodes::EXPRList{NodeName}
+    nodes::EXPRList{HierarchialNode}
     nl::EXPR{Notation}
 end
 
@@ -267,27 +267,27 @@ end
 abstract type AbstractInstanceNode <: AbstractASTNode end
 
 struct Capacitor <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    pos::EXPR{NodeName}
-    neg::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
+    pos::EXPR{HierarchialNode}
+    neg::EXPR{HierarchialNode}
     val::Union{EXPR, Nothing} # the value can be specified in a parameter
     params::EXPRList{Parameter}
     nl::EXPR{Notation}
 end
 
 struct Resistor <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    pos::EXPR{NodeName}
-    neg::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
+    pos::EXPR{HierarchialNode}
+    neg::EXPR{HierarchialNode}
     val::Union{EXPR, Nothing} # can be a model, a value, or nothing (value is specified in a parameter)
     params::EXPRList{Parameter}
     nl::EXPR{Notation}
 end
 
 struct Inductor <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    pos::EXPR{NodeName}
-    neg::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
+    pos::EXPR{HierarchialNode}
+    neg::EXPR{HierarchialNode}
     val::Union{EXPR, Nothing} # the value can be specified in a parameter
     params::EXPRList{Parameter}
     nl::EXPR{Notation}
@@ -314,25 +314,25 @@ struct TranSource <: AbstractInstanceNode
 end
 
 struct Voltage <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    pos::EXPR{NodeName}
-    neg::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
+    pos::EXPR{HierarchialNode}
+    neg::EXPR{HierarchialNode}
     vals::EXPRList{Union{ACSource, DCSource, TranSource}}
     nl::EXPR{Notation}
 end
 
 struct Current <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    pos::EXPR{NodeName}
-    neg::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
+    pos::EXPR{HierarchialNode}
+    neg::EXPR{HierarchialNode}
     vals::EXPRList{Union{ACSource, DCSource, TranSource}}
     nl::EXPR{Notation}
 end
 
 struct Behavioral <: AbstractASTNode
-    name::EXPR{NodeName}
-    pos::EXPR{NodeName}
-    neg::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
+    pos::EXPR{HierarchialNode}
+    neg::EXPR{HierarchialNode}
     params::EXPRList{Parameter}
     nl::EXPR{Notation}
 end
@@ -374,53 +374,53 @@ struct ControlledSource{in, out} <: AbstractInstanceNode
 end
 
 struct BipolarTransistor <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    c::EXPR{NodeName}
-    b::EXPR{NodeName}
-    e::EXPR{NodeName}
-    s::Union{Nothing, EXPR{NodeName}}
-    model::EXPR{Identifier}
+    name::EXPR{HierarchialNode}
+    c::EXPR{HierarchialNode}
+    b::EXPR{HierarchialNode}
+    e::EXPR{HierarchialNode}
+    s::Union{Nothing, EXPR{HierarchialNode}}
+    model::EXPR{HierarchialNode}
     params::EXPRList{Parameter}
     nl::EXPR{Notation}
 end
 
 
 struct Diode <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    pos::EXPR{NodeName}
-    neg::EXPR{NodeName}
-    model::EXPR{Identifier}
+    name::EXPR{HierarchialNode}
+    pos::EXPR{HierarchialNode}
+    neg::EXPR{HierarchialNode}
+    model::EXPR{HierarchialNode}
     params::EXPRList{Parameter}
     nl::EXPR{Notation}
 end
 
 struct MOSFET <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    d::EXPR{NodeName}
-    g::EXPR{NodeName}
-    s::EXPR{NodeName}
-    b::EXPR{NodeName}
-    model::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
+    d::EXPR{HierarchialNode}
+    g::EXPR{HierarchialNode}
+    s::EXPR{HierarchialNode}
+    b::EXPR{HierarchialNode}
+    model::EXPR{HierarchialNode}
     parameters::EXPRList{Parameter}
     nl::EXPR{Notation}
 end
 
 struct SParameterElement <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    nd1::EXPR{NodeName}
-    nd2::EXPR{NodeName}
-    model::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
+    nd1::EXPR{HierarchialNode}
+    nd2::EXPR{HierarchialNode}
+    model::EXPR{HierarchialNode}
     parameters::EXPRList{Parameter}
     nl::EXPR{Notation}
 end
 
 struct Switch <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    nd1::EXPR{NodeName}
-    nd2::EXPR{NodeName}
-    cnd1::EXPR{NodeName}
-    cnd2::EXPR{NodeName}
-    model::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
+    nd1::EXPR{HierarchialNode}
+    nd2::EXPR{HierarchialNode}
+    cnd1::EXPR{HierarchialNode}
+    cnd2::EXPR{HierarchialNode}
+    model::EXPR{HierarchialNode}
     onoff::EXPR{Keyword}
     nl::EXPR{Notation}
 end
@@ -432,17 +432,17 @@ struct JuliaEscape <: AbstractASTNode
 end
 
 struct JuliaDevice <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    nodes::EXPRList{NodeName}
+    name::EXPR{HierarchialNode}
+    nodes::EXPRList{HierarchialNode}
     dev::EXPR{JuliaEscape}
     nl::EXPR{Notation}
 end
 
 struct SubcktCall <: AbstractInstanceNode
-    name::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
     # TODO: Probably not right:
-    nodes::EXPRList{NodeName}
-    model::EXPR{NodeName}
+    nodes::EXPRList{HierarchialNode}
+    model::EXPR{HierarchialNode}
     parameters::EXPRList{Parameter}
     nl::EXPR{Notation}
 end
@@ -452,7 +452,7 @@ struct Subckt <: AbstractBlockASTNode
     dot::EXPR{Notation}
     kw::EXPR{Keyword}
     name::Union{EXPR{Identifier}, EXPR{NumberLiteral}}
-    subckt_nodes::EXPRList{NodeName}
+    subckt_nodes::EXPRList{HierarchialNode}
     parameters::EXPRList{Parameter}
     nl1::EXPR{Notation}
     stmts::EXPRList
