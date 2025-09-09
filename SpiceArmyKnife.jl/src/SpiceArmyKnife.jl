@@ -16,6 +16,66 @@ const SP = SPICENetlistCSTParser
 LSymbol(s) = Symbol(lowercase(String(s)))
 
 """
+    ExtractionConfig
+
+Configuration for extracting definitions from SPICE/Spectre AST.
+"""
+mutable struct ExtractionConfig
+    models::Vector{Any}
+    subcircuits::Vector{Any}
+    parsed_files::Dict{String, Any}
+    includepaths::Vector{String}
+    libraries::Set{Tuple{String,String}}
+    depth::Int
+    lib_section::Union{String, Nothing}
+    max_depth::Int
+    current_file::String
+    
+    function ExtractionConfig(; models=[], subcircuits=[], parsed_files=Dict{String, Any}(), 
+                            includepaths=String[], libraries=Set{Tuple{String,String}}(), 
+                            depth=0, lib_section=nothing, max_depth=10, current_file="")
+        new(models, subcircuits, parsed_files, includepaths, libraries, depth, lib_section, max_depth, current_file)
+    end
+end
+
+# Helper function to create a new config with incremented depth
+function deeper(config::ExtractionConfig; new_includepaths=nothing, new_file=nothing)
+    ExtractionConfig(
+        models=config.models, subcircuits=config.subcircuits, 
+        parsed_files=config.parsed_files, 
+        includepaths=new_includepaths === nothing ? config.includepaths : new_includepaths,
+        libraries=config.libraries, depth=config.depth+1, 
+        lib_section=config.lib_section, max_depth=config.max_depth,
+        current_file=new_file === nothing ? config.current_file : new_file)
+end
+
+"""
+    ArchiveConfig
+
+Configuration for processing an archive with SPICE/Spectre models.
+
+Fields:
+- url: URL to download archive from
+- entrypoints: Either Vector{String} of specific paths or nothing for auto-discovery
+- base_category: Base category path for Mosaic format
+- mode: Template mode (:inline, :include, :lib)
+- lib_section: If specified, only process this .lib section to avoid duplicates
+- max_depth: Maximum recursion depth to avoid implementation details
+"""
+struct ArchiveConfig
+    url::String
+    entrypoints::Union{Vector{String}, Nothing}
+    base_category::Vector{String}
+    mode::Symbol
+    lib_section::Union{String, Nothing}
+    max_depth::Int
+    
+    function ArchiveConfig(url, entrypoints, base_category, mode; lib_section=nothing, max_depth=10)
+        new(url, entrypoints, base_category, mode, lib_section, max_depth)
+    end
+end
+
+"""
     generate_template_code(code, mode, archive_url, file_path)
 
 Generate template code for Mosaic format.
@@ -38,39 +98,102 @@ function generate_template_code(code, mode, archive_url, file_path)
 end
 
 """
-    extract_definitions_from_file(filepath::String) -> (models, subcircuits)
+    extract_definitions_from_file(filepath::String; lib_section=nothing, max_depth=10) -> (models, subcircuits)
 
 Parse a SPICE/Spectre file and extract model and subcircuit definitions.
 Uses automatic file extension detection (.scs = Spectre, others = SPICE).
+Handles .include and .lib statements by recursively parsing referenced files.
 """
-function extract_definitions_from_file(filepath::String)
-    ast = SpectreNetlistParser.parsefile(filepath)
-    return extract_definitions(ast)
+function extract_definitions_from_file(filepath::String; lib_section=nothing, max_depth=10)
+    ast = SpectreNetlistParser.parsefile(filepath; implicit_title=false)
+    config = ExtractionConfig(
+        includepaths=[dirname(abspath(filepath))],
+        lib_section=lib_section,
+        max_depth=max_depth,
+        current_file=filepath
+    )
+    
+    extract_definitions(ast, config)
+    return config.models, config.subcircuits
 end
 
 """
-    extract_definitions(ast; models = [], subcircuits = [])
+    extract_definitions(ast, config::ExtractionConfig)
 
-Extract model and subcircuit definitions from a SPICE/Spectre AST.
-Returns models as (name, type, code) tuples and subcircuits as (name, ports, parameters, code) tuples.
+Extract model and subcircuit definitions from a SPICE/Spectre AST using the provided configuration.
+Returns models as (name, type, subtype, code) tuples and subcircuits as (name, ports, parameters, code) tuples.
+For models, subtype indicates polarity (:pmos/:nmos), defaults to :nmos unless 'pchan' or 'pmos' found in parameters.
 For subcircuits, parameters is a list of parameter names from both subckt line and .param statements inside.
 Code is the full source text extracted using String(node).
 """
-function extract_definitions(ast; models = [], subcircuits = [])
+function extract_definitions(ast, config::ExtractionConfig)
+    # Check recursion depth limit
+    if config.depth > config.max_depth
+        file_info = config.current_file == "" ? "" : " in $(basename(config.current_file))"
+        println("Warning: Max depth ($(config.max_depth)) reached$file_info, stopping recursion")
+        return config.models, config.subcircuits
+    end
     for stmt in ast.stmts
         if isa(stmt, SNode{SPICENetlistSource})
             # Recurse into netlist source nodes
-            extract_definitions(stmt; models, subcircuits)
+            extract_definitions(stmt, config)
+        elseif isa(stmt, SNode{SpectreNetlistSource})
+            # Recurse into spectre netlist source nodes
+            extract_definitions(stmt, config)
+        elseif isa(stmt, SNode{SP.LibStatement})
+            # Recurse into .lib sections, but filter by lib_section if specified
+            section_name = String(stmt.name)
+            if config.lib_section === nothing || section_name == config.lib_section
+                extract_definitions(stmt, deeper(config))
+            end
+        elseif isa(stmt, SNode{SP.IncludeStatement})
+            # Handle .include statements
+            str = strip(String(stmt.path), ['"', '\''])
+            try
+                _, path = resolve_includepath(str, config.includepaths)
+                sa = get!(() -> SpectreNetlistParser.parsefile(path; implicit_title=false), config.parsed_files, path)
+                new_includepaths = [dirname(path), config.includepaths...]
+                extract_definitions(sa, deeper(config; new_includepaths, new_file=path))
+            catch e
+                println("Warning: Could not process include $str: $e")
+            end
+        elseif isa(stmt, SNode{SP.LibInclude})
+            # Handle .lib statements (includes with section)
+            str = strip(String(stmt.path), ['"', '\''])
+            section = String(stmt.name)
+            try
+                _, path = resolve_includepath(str, config.includepaths)
+                lib_key = (path, section)
+                if lib_key ∉ config.libraries
+                    push!(config.libraries, lib_key)
+                    p = get!(() -> SpectreNetlistParser.parsefile(path; implicit_title=false), config.parsed_files, path)
+                    sa = extract_section_from_lib(p; section)
+                    if sa !== nothing
+                        new_includepaths = [dirname(path), config.includepaths...]
+                        extract_definitions(sa, deeper(config; new_includepaths, new_file=path))
+                    else
+                        println("Warning: Unable to find section '$section' in $str")
+                    end
+                end
+            catch e
+                println("Warning: Could not process lib include $str section $section: $e")
+            end
         elseif isa(stmt, SNode{SP.Model})
             name = LSymbol(stmt.name)
             typ = LSymbol(stmt.typ)
+            # Check for PMOS indicators in parameters
+            params = [LSymbol(p.name) for p in stmt.parameters]
+            subtype = (:pchan in params || :pmos in params) ? :pmos : :nmos
             code = String(stmt)
-            push!(models, (name, typ, code))
+            push!(config.models, (name, typ, subtype, code))
         elseif isa(stmt, SNode{SC.Model})
             name = LSymbol(stmt.name)
             typ = LSymbol(stmt.master_name)
+            # Check for PMOS indicators in parameters
+            params = [LSymbol(p.name) for p in stmt.parameters]
+            subtype = (:pchan in params || :pmos in params) ? :pmos : :nmos
             code = String(stmt)
-            push!(models, (name, typ, code))
+            push!(config.models, (name, typ, subtype, code))
         elseif isa(stmt, SNode{SP.Subckt})
             name = LSymbol(stmt.name)
             ports = [LSymbol(node.name) for node in stmt.subckt_nodes]
@@ -79,7 +202,7 @@ function extract_definitions(ast; models = [], subcircuits = [])
             # Add parameters from .param statements inside subcircuit
             extract_subckt_params!(stmt, params)
             code = String(stmt)
-            push!(subcircuits, (name, ports, params, code))
+            push!(config.subcircuits, (name, ports, params, code))
         elseif isa(stmt, SNode{SC.Subckt})
             name = LSymbol(stmt.name)
             ports = [LSymbol(node) for node in stmt.subckt_nodes.nodes]
@@ -87,10 +210,10 @@ function extract_definitions(ast; models = [], subcircuits = [])
             # Add parameters from .param statements inside subcircuit
             extract_subckt_params!(stmt, params)
             code = String(stmt)
-            push!(subcircuits, (name, ports, params, code))
+            push!(config.subcircuits, (name, ports, params, code))
         end
     end
-    return models, subcircuits
+    return config.models, config.subcircuits
 end
 
 function extract_subckt_params!(subckt, params)
@@ -108,6 +231,37 @@ function extract_subckt_params!(subckt, params)
 end
 
 """
+    resolve_includepath(path, includepaths) -> (ispdk, fullpath)
+
+Resolve an include path by searching in includepaths. 
+Returns (false, fullpath) when found.
+"""
+function resolve_includepath(path, includepaths)
+    isfile(path) && return false, path
+    for base in includepaths
+        fullpath = joinpath(base, path)
+        isfile(fullpath) && return false, fullpath
+    end
+    error("include path $path not found in $includepaths")
+end
+
+"""
+    extract_section_from_lib(p; section) -> SNode or nothing
+
+Extract a specific .lib section from a parsed SPICE file.
+"""
+function extract_section_from_lib(p; section)
+    for node in p.stmts
+        if isa(node, SNode{SP.LibStatement})
+            if lowercase(String(node.name)) == lowercase(section)
+                return node
+            end
+        end
+    end
+    return nothing
+end
+
+"""
     to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing)
 
 Convert extracted SPICE/Spectre definitions to Mosaic model database format.
@@ -116,7 +270,7 @@ Returns a vector of model definitions in CouchDB format with _id keys.
 Each model/subcircuit becomes an entry with a generated _id.
 
 Parameters:
-- models: Vector of (name, type, code) tuples from extract_definitions
+- models: Vector of (name, type, subtype, code) tuples from extract_definitions
 - subcircuits: Vector of (name, ports, parameters, code) tuples from extract_definitions  
 - source_file: Optional source filename for metadata
 - base_category: Base category path as vector of strings
@@ -129,30 +283,11 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
     result = Vector{Dict{String, Any}}()
     
     # Convert models (SPICE .model statements)
-    for (name, typ, code) in models
+    for (name, typ, subtype, code) in models
         model_id = "models:" * string(uuid4())
         
-        # Map SPICE device types to Mosaic types
-        device_mapping = device_type_mapping(typ)
-        mosaic_type = if device_mapping == :d
-            "diode"
-        elseif device_mapping == :r
-            "resistor"  
-        elseif device_mapping == :c
-            "capacitor"
-        elseif device_mapping == :l
-            "inductor"
-        elseif device_mapping == :npn
-            "npn"
-        elseif device_mapping == :pnp
-            "pnp"
-        elseif device_mapping == :nmos
-            "nmos"
-        elseif device_mapping == :pmos
-            "pmos"
-        else
-            "ckt"  # fallback for unknown types
-        end
+        # Map SPICE device types directly to Mosaic types, using subtype for polarity
+        mosaic_type = device_type_mapping(typ, subtype)
         
         # Generate template code based on mode
         template_code = generate_template_code(code, mode, archive_url, source_file)
@@ -161,7 +296,7 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
             "_id" => model_id,
             "name" => string(name),
             "type" => mosaic_type,
-            "category" => vcat(base_category, ["Models"]),  # Put models in Models subcategory
+            "category" => base_category,  # Put models in Models subcategory
             # SPICE models define device templates, not schematic circuits  
             "templates" => Dict(
                 "spice" => [Dict(
@@ -179,7 +314,7 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
         
         # Add source file info if available
         if source_file !== nothing
-            model_def["category"] = vcat(base_category, [basename(source_file), "Models"])
+            model_def["category"] = vcat(base_category, [basename(source_file)])
         end
         
         push!(result, model_def)
@@ -189,15 +324,8 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
     for (name, ports, parameters, code) in subcircuits
         model_id = "models:" * string(uuid4())
         
-        # Determine port layout - for now put all ports on left/right
-        # TODO: Implement smarter port placement based on port names or hints
-        mid_point = div(length(ports), 2)
-        port_layout = Dict(
-            "top" => String[],
-            "bottom" => String[], 
-            "left" => string.(ports[1:mid_point]),
-            "right" => string.(ports[mid_point+1:end])
-        )
+        # Determine port layout using heuristics based on port names
+        port_layout = determine_port_layout(ports)
         
         # Generate template code based on mode
         template_code = generate_template_code(code, mode, archive_url, source_file)
@@ -206,7 +334,7 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
             "_id" => model_id,
             "name" => string(name),
             "type" => "ckt",  # subcircuits are always circuit type
-            "category" => vcat(base_category, ["Subcircuits"]),
+            "category" => base_category,
             "ports" => port_layout,
             "templates" => Dict(
                 "spice" => [Dict(
@@ -224,7 +352,7 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
         
         # Add source file info if available  
         if source_file !== nothing
-            model_def["category"] = vcat(base_category, [basename(source_file), "Subcircuits"])
+            model_def["category"] = vcat(base_category, [basename(source_file)])
         end
         
         push!(result, model_def)
@@ -233,48 +361,114 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
     return result
 end
 
-# Helper function to map SPICE device types  
-function device_type_mapping(spice_type::Symbol)
-    # Handle common SPICE device type mappings
+# Helper function to map SPICE device types directly to Mosaic types
+"""
+    determine_port_layout(ports::Vector{Symbol}) -> Dict{String, Vector{String}}
+
+Determine the layout of ports based on naming patterns and heuristics.
+
+Port placement rules:
+- LEFT: ports containing "in", "fb", "ref", "adj", "en", "enable"  
+- RIGHT: ports containing "out"
+- TOP: "vcc", "vdd", "v+", "hv", "vb", "hb"
+- BOTTOM: "gnd", "ground", "com", "vss", "vee", "v-"
+- Unassigned ports: split in half between left and right
+"""
+function determine_port_layout(ports::Vector{Symbol})
+    layout = Dict(
+        "top" => String[],
+        "bottom" => String[], 
+        "left" => String[],
+        "right" => String[]
+    )
+    
+    unassigned = Symbol[]
+    
+    for port in ports
+        port_str = lowercase(string(port))
+        
+        # Check for clear functional patterns first
+        if contains(port_str, "in") || port_str in ["fb", "ref", "adj", "en", "enable"]
+            push!(layout["left"], string(port))
+        elseif contains(port_str, "out")
+            push!(layout["right"], string(port))
+        elseif port_str in ["vcc", "vdd", "v+", "hv", "vb", "hb"]
+            push!(layout["top"], string(port))
+        elseif port_str in ["gnd", "ground", "com", "vss", "vee", "v-"]
+            push!(layout["bottom"], string(port))
+        else
+            push!(unassigned, port)
+        end
+    end
+    
+    # Distribute unassigned ports by splitting in half between left and right
+    if !isempty(unassigned)
+        mid_point = div(length(unassigned), 2)
+        append!(layout["left"], string.(unassigned[1:mid_point]))
+        append!(layout["right"], string.(unassigned[mid_point+1:end]))
+    end
+    
+    return layout
+end
+
+# Helper function to map SPICE device types directly to Mosaic types
+function device_type_mapping(spice_type::Symbol, subtype::Symbol=spice_type)
     spice_str = lowercase(string(spice_type))
-    if spice_str == "d"
-        return :d
-    elseif spice_str == "r" 
-        return :r
+    
+    # Basic passive components
+    if spice_str in ["r", "res"]
+        return "resistor"
     elseif spice_str == "c"
-        return :c  
+        return "capacitor"  
     elseif spice_str == "l"
-        return :l
-    elseif spice_str in ["nmos", "nch"]
-        return :nmos
-    elseif spice_str in ["pmos", "pch"] 
-        return :pmos
-    elseif spice_str in ["npn", "bjt_npn"]
-        return :npn
-    elseif spice_str in ["pnp", "bjt_pnp"]
-        return :pnp
+        return "inductor"
+    
+    # Diodes
+    elseif spice_str == "d"
+        return "diode"
+    
+    # BJT transistors
+    elseif spice_str == "npn"
+        return "npn"
+    elseif spice_str == "pnp"
+        return "pnp"
+    
+    # MOSFET transistors
+    elseif spice_str == "nmos"
+        return "nmos"
+    elseif spice_str == "pmos" 
+        return "pmos"
+    elseif spice_str == "vdmos"
+        return subtype == :pmos ? "pmos" : "nmos"  # Use detected polarity
+    
+    # JFET transistors - map to BJT as reasonable fallback
+    elseif spice_str == "njf"
+        return "npn"
+    elseif spice_str == "pjf"
+        return "pnp"
+    
+    # MESFET transistors - map to MOSFET as reasonable fallback
+    elseif spice_str == "nmf"
+        return "nmos"
+    elseif spice_str == "pmf"
+        return "pmos"
+    
+    # Unsupported types
+    elseif spice_str in ["sw", "csw", "urc", "ltra", "vswitch"]
+        error("Unsupported SPICE model type: $spice_str. Switches and transmission lines are not supported in Mosaic format.")
+    
+    # Unknown types
     else
-        return :unknown
+        error("Unknown SPICE model type: $spice_str. Supported types are: R, RES, C, L, D, NPN, PNP, NMOS, PMOS, VDMOS, NJF, PJF, NMF, PMF")
     end
 end
 
 """
-    process_archive(archive_url::String; entrypoints=nothing, base_category=String[], mode=:include)
+    process_archive(config::ArchiveConfig)
 
-Download an archive from a URL, extract it, find model/subcircuit files, parse them, and generate a Mosaic model database.
-
-Parameters:
-- archive_url: URL to download archive from
-- entrypoints: Either Vector{String} of specific relative paths in archive, or nothing to auto-discover files
-- base_category: Base category path for Mosaic format
-- mode: Template mode (:inline, :include, :lib)
-
-If entrypoints is nothing, automatically finds files with extensions: .mod, .sp, .lib, .cir, .inc, .txt
-If entrypoints is a vector of strings, treats them as specific relative paths within the archive.
-
-Returns Vector{Dict} with model definitions including _id keys.
+Process an archive using the specified configuration.
 """
-function process_archive(archive_url::String; entrypoints=nothing, base_category=String[], mode=:include)
+function process_archive(config::ArchiveConfig)
     result = Vector{Dict{String, Any}}()
     
     # Create temporary directory for extraction
@@ -282,9 +476,9 @@ function process_archive(archive_url::String; entrypoints=nothing, base_category
     
     try
         # Download archive
-        println("Downloading archive from $archive_url...")
+        println("Downloading archive from $(config.url)...")
         archive_file = joinpath(temp_dir, "archive")
-        Downloads.download(archive_url, archive_file)
+        Downloads.download(config.url, archive_file)
         
         # Extract archive using p7zip (handles zip, tar.gz, 7z, etc.)
         extract_dir = joinpath(temp_dir, "extracted")
@@ -298,7 +492,7 @@ function process_archive(archive_url::String; entrypoints=nothing, base_category
         # Find files to process
         matching_files = Pair{String,String}[]  # full_path => relative_path
         
-        if entrypoints === nothing
+        if config.entrypoints === nothing
             # Auto-discover SPICE files by walking directory tree
             spice_extensions = [".mod", ".sp", ".lib", ".cir", ".inc", ".txt"]
             
@@ -314,7 +508,7 @@ function process_archive(archive_url::String; entrypoints=nothing, base_category
             end
         else
             # Use specific relative paths provided by user
-            for relative_path in entrypoints
+            for relative_path in config.entrypoints
                 full_path = joinpath(extract_dir, relative_path)
                 if isfile(full_path)
                     push!(matching_files, full_path => relative_path)
@@ -332,16 +526,16 @@ function process_archive(archive_url::String; entrypoints=nothing, base_category
             
             try
                 # Extract definitions from file
-                models, subcircuits = extract_definitions_from_file(full_path)
+                models, subcircuits = extract_definitions_from_file(full_path; lib_section=config.lib_section, max_depth=config.max_depth)
                 
                 if !isempty(models) || !isempty(subcircuits)
                     # Convert to Mosaic format with archive URL
                     file_result = to_mosaic_format(
                         models, subcircuits;
                         source_file=relative_path,
-                        base_category=base_category,
-                        mode=mode,
-                        archive_url=archive_url
+                        base_category=config.base_category,
+                        mode=config.mode,
+                        archive_url=config.url
                     )
                     
                     # Append results
@@ -363,6 +557,7 @@ function process_archive(archive_url::String; entrypoints=nothing, base_category
     return result
 end
 
-export extract_definitions, extract_definitions_from_file, to_mosaic_format, process_archive
+
+export extract_definitions, extract_definitions_from_file, to_mosaic_format, process_archive, ArchiveConfig, ExtractionConfig
 
 end # module SpiceArmyKnife

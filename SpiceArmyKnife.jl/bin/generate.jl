@@ -7,9 +7,6 @@ This script processes multiple SPICE model archives from various sources
 and generates a unified JSON database for CouchDB upload.
 """
 
-using Pkg
-Pkg.activate(joinpath(@__DIR__, ".."))
-
 using SpiceArmyKnife
 using JSON
 
@@ -22,48 +19,42 @@ function main()
     all_models = Vector{Dict{String, Any}}()
     
     # Archive configurations
-    # Each entry: (url, entrypoints, category, mode)
     archives = [
-        # NGSpice Basic Models - comprehensive collection
-        (
+        ArchiveConfig(
             "https://ngspice.sourceforge.io/model-parameters/basic_models.7z",
-            nothing,  # Auto-discover all files
-            ["NGSpice", "Basic Models"],
-            :include
+            nothing,
+            ["Basic Models"],
+            :inline
         ),
-        
-        # Example of processing specific files from an archive
-        (
-            "https://ngspice.sourceforge.io/model-parameters/basic_models.7z",
-            ["basic_models/diodes/1N4148.mod", "basic_models/LED/SnapLED150.mod"],
-            ["NGSpice", "Selected Components"],
-            :lib
+
+        ArchiveConfig(
+            "https://ngspice.sourceforge.io/model-parameters/MicroCap-LIBRARY.7z",
+            nothing,
+            ["MicroCap Library"],
+            :inline
         ),
-        
-        # Add more archives here as needed:
-        # (
-        #     "https://example.com/other_models.zip",
-        #     ["models/*.lib", "subcircuits/*.sp"],
-        #     ["Vendor", "Professional Models"],
-        #     :inline
-        # ),
+
+        ArchiveConfig(
+            "https://github.com/CedarEDA/Sky130PDK.jl/archive/refs/heads/main.zip",
+            ["Sky130PDK.jl-main/sky130A/libs.tech/ngspice/sky130.lib.spice"],
+            ["SkyWater 130nm PDK"],
+            :lib;
+            lib_section="tt",  # Only process "tt" (typical) corner to avoid duplicates
+        )
     ]
     
     # Process each archive
-    for (i, (url, entrypoints, category, mode)) in enumerate(archives)
-        println("\nProcessing archive $(i)/$(length(archives)): $url")
-        println("Category: $(join(category, " / "))")
-        println("Mode: $mode")
-        println("Entrypoints: $(entrypoints === nothing ? "auto-discover" : join(entrypoints, ", "))")
+    for (i, config) in enumerate(archives)
+        println("\nProcessing archive $(i)/$(length(archives)): $(config.url)")
+        println("Category: $(join(config.base_category, " / "))")
+        println("Mode: $(config.mode)")
+        println("Entrypoints: $(config.entrypoints === nothing ? "auto-discover" : join(config.entrypoints, ", "))")
+        println("Lib section: $(config.lib_section === nothing ? "all" : config.lib_section)")
+        println("Max depth: $(config.max_depth)")
         println("-" ^ 60)
         
         try
-            models = process_archive(
-                url;
-                entrypoints=entrypoints,
-                base_category=category,
-                mode=mode
-            )
+            models = process_archive(config)
             
             println("✓ Successfully processed $(length(models)) models")
             append!(all_models, models)
