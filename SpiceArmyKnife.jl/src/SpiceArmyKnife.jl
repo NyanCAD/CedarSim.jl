@@ -8,6 +8,7 @@ using SpectreNetlistParser: SpectreNetlistCSTParser, SPICENetlistParser
 using .SPICENetlistParser: SPICENetlistCSTParser
 using .SpectreNetlistCSTParser: SpectreNetlistSource
 using .SPICENetlistCSTParser: SPICENetlistSource
+using StringEncodings
 
 const SNode = SpectreNetlistCSTParser.Node
 const SC = SpectreNetlistCSTParser
@@ -26,27 +27,29 @@ mutable struct ExtractionConfig
     parsed_files::Dict{String, Any}
     includepaths::Vector{String}
     libraries::Set{Tuple{String,String}}
-    depth::Int
     lib_section::Union{String, Nothing}
-    max_depth::Int
+    device_blacklist::Union{Regex, Nothing}
     current_file::String
+    file_device_types::Dict{String, String}  # filename -> device type override
     
     function ExtractionConfig(; models=[], subcircuits=[], parsed_files=Dict{String, Any}(), 
                             includepaths=String[], libraries=Set{Tuple{String,String}}(), 
-                            depth=0, lib_section=nothing, max_depth=10, current_file="")
-        new(models, subcircuits, parsed_files, includepaths, libraries, depth, lib_section, max_depth, current_file)
+                            lib_section=nothing, device_blacklist=nothing, current_file="",
+                            file_device_types=Dict{String, String}())
+        new(models, subcircuits, parsed_files, includepaths, libraries, lib_section, device_blacklist, current_file, file_device_types)
     end
 end
 
-# Helper function to create a new config with incremented depth
+# Helper function to create a new config for includes
 function deeper(config::ExtractionConfig; new_includepaths=nothing, new_file=nothing)
     ExtractionConfig(
         models=config.models, subcircuits=config.subcircuits, 
         parsed_files=config.parsed_files, 
         includepaths=new_includepaths === nothing ? config.includepaths : new_includepaths,
-        libraries=config.libraries, depth=config.depth+1, 
-        lib_section=config.lib_section, max_depth=config.max_depth,
-        current_file=new_file === nothing ? config.current_file : new_file)
+        libraries=config.libraries, 
+        lib_section=config.lib_section, device_blacklist=config.device_blacklist,
+        current_file=new_file === nothing ? config.current_file : new_file,
+        file_device_types=config.file_device_types)
 end
 
 """
@@ -60,7 +63,9 @@ Fields:
 - base_category: Base category path for Mosaic format
 - mode: Template mode (:inline, :include, :lib)
 - lib_section: If specified, only process this .lib section to avoid duplicates
-- max_depth: Maximum recursion depth to avoid implementation details
+- device_blacklist: Regex pattern to skip device names (use alternation like r"__parasitic|__base"i)
+- file_device_types: Dict mapping filename -> device type for file-level overrides
+- encoding: File encoding (default: enc"UTF-8"). Use enc"ISO-8859-1" for older SPICE files with degree symbols
 """
 struct ArchiveConfig
     url::String
@@ -68,10 +73,12 @@ struct ArchiveConfig
     base_category::Vector{String}
     mode::Symbol
     lib_section::Union{String, Nothing}
-    max_depth::Int
+    device_blacklist::Union{Regex, Nothing}
+    file_device_types::Dict{String, String}
+    encoding::Encoding
     
-    function ArchiveConfig(url, entrypoints, base_category, mode; lib_section=nothing, max_depth=10)
-        new(url, entrypoints, base_category, mode, lib_section, max_depth)
+    function ArchiveConfig(url, entrypoints, base_category, mode; lib_section=nothing, device_blacklist=nothing, file_device_types=Dict{String, String}(), encoding=enc"UTF-8")
+        new(url, entrypoints, base_category, mode, lib_section, device_blacklist, file_device_types, encoding)
     end
 end
 
@@ -98,18 +105,21 @@ function generate_template_code(code, mode, archive_url, file_path)
 end
 
 """
-    extract_definitions_from_file(filepath::String; lib_section=nothing, max_depth=10) -> (models, subcircuits)
+    extract_definitions_from_file(filepath::String; lib_section=nothing, device_blacklist=nothing, encoding=enc"UTF-8") -> (models, subcircuits)
 
 Parse a SPICE/Spectre file and extract model and subcircuit definitions.
 Uses automatic file extension detection (.scs = Spectre, others = SPICE).
 Handles .include and .lib statements by recursively parsing referenced files.
 """
-function extract_definitions_from_file(filepath::String; lib_section=nothing, max_depth=10)
-    ast = SpectreNetlistParser.parsefile(filepath; implicit_title=false)
+function extract_definitions_from_file(filepath::String; lib_section=nothing, device_blacklist=nothing, encoding=enc"UTF-8")
+    # Read file with specified encoding
+    content = read(filepath, String, encoding)
+    ast = SpectreNetlistParser.parse(IOBuffer(content); fname=filepath, implicit_title=false)
+    
     config = ExtractionConfig(
         includepaths=[dirname(abspath(filepath))],
         lib_section=lib_section,
-        max_depth=max_depth,
+        device_blacklist=device_blacklist,
         current_file=filepath
     )
     
@@ -127,12 +137,6 @@ For subcircuits, parameters is a list of parameter names from both subckt line a
 Code is the full source text extracted using String(node).
 """
 function extract_definitions(ast, config::ExtractionConfig)
-    # Check recursion depth limit
-    if config.depth > config.max_depth
-        file_info = config.current_file == "" ? "" : " in $(basename(config.current_file))"
-        println("Warning: Max depth ($(config.max_depth)) reached$file_info, stopping recursion")
-        return config.models, config.subcircuits
-    end
     for stmt in ast.stmts
         if isa(stmt, SNode{SPICENetlistSource})
             # Recurse into netlist source nodes
@@ -180,6 +184,10 @@ function extract_definitions(ast, config::ExtractionConfig)
             end
         elseif isa(stmt, SNode{SP.Model})
             name = LSymbol(stmt.name)
+            # Check if device name matches blacklist pattern
+            if config.device_blacklist !== nothing && occursin(config.device_blacklist, String(name))
+                continue
+            end
             typ = LSymbol(stmt.typ)
             # Check for PMOS indicators in parameters
             params = [LSymbol(p.name) for p in stmt.parameters]
@@ -188,6 +196,10 @@ function extract_definitions(ast, config::ExtractionConfig)
             push!(config.models, (name, typ, subtype, code))
         elseif isa(stmt, SNode{SC.Model})
             name = LSymbol(stmt.name)
+            # Check if device name matches blacklist pattern
+            if config.device_blacklist !== nothing && occursin(config.device_blacklist, String(name))
+                continue
+            end
             typ = LSymbol(stmt.master_name)
             # Check for PMOS indicators in parameters
             params = [LSymbol(p.name) for p in stmt.parameters]
@@ -196,6 +208,10 @@ function extract_definitions(ast, config::ExtractionConfig)
             push!(config.models, (name, typ, subtype, code))
         elseif isa(stmt, SNode{SP.Subckt})
             name = LSymbol(stmt.name)
+            # Check if device name matches blacklist pattern
+            if config.device_blacklist !== nothing && occursin(config.device_blacklist, String(name))
+                continue
+            end
             ports = [LSymbol(node.name) for node in stmt.subckt_nodes]
             # Start with parameters from subckt line
             params = [LSymbol(p.name) for p in stmt.parameters]
@@ -205,6 +221,10 @@ function extract_definitions(ast, config::ExtractionConfig)
             push!(config.subcircuits, (name, ports, params, code))
         elseif isa(stmt, SNode{SC.Subckt})
             name = LSymbol(stmt.name)
+            # Check if device name matches blacklist pattern
+            if config.device_blacklist !== nothing && occursin(config.device_blacklist, String(name))
+                continue
+            end
             ports = [LSymbol(node) for node in stmt.subckt_nodes.nodes]
             params = Symbol[]
             # Add parameters from .param statements inside subcircuit
@@ -256,13 +276,16 @@ function extract_section_from_lib(p; section)
             if lowercase(String(node.name)) == lowercase(section)
                 return node
             end
+        elseif isa(node, SNode{SPICENetlistSource})
+            # Recurse into netlist source nodes
+            return extract_section_from_lib(node; section)
         end
     end
     return nothing
 end
 
 """
-    to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing)
+    to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing, file_device_type=nothing)
 
 Convert extracted SPICE/Spectre definitions to Mosaic model database format.
 
@@ -276,15 +299,18 @@ Parameters:
 - base_category: Base category path as vector of strings
 - mode: Either :inline (embed code directly), :include (use .include), or :lib (use .lib with {corner})
 - archive_url: For include/lib modes, the archive URL in zipurl#archive/path format
+- file_device_type: Override device type for all subcircuits in this file (e.g., "capacitor")
 
 Returns Vector{Dict} with model definitions including _id keys.
 """
-function to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing)
+function to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing, file_device_type=nothing)
     result = Vector{Dict{String, Any}}()
     
     # Convert models (SPICE .model statements)
     for (name, typ, subtype, code) in models
-        model_id = "models:" * string(uuid4())
+        # Create deterministic ID based on name, type, and category path
+        category_str = isempty(base_category) ? "" : join(base_category, "_")
+        model_id = "models:$(category_str)_$(typ)_$(name)"
         
         # Map SPICE device types directly to Mosaic types, using subtype for polarity
         mosaic_type = device_type_mapping(typ, subtype)
@@ -322,7 +348,12 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
     
     # Convert subcircuits  
     for (name, ports, parameters, code) in subcircuits
-        model_id = "models:" * string(uuid4())
+        # Use file-level override if specified, otherwise detect from name
+        device_type = file_device_type !== nothing ? file_device_type : detect_device_type_from_name(name)
+        
+        # Create deterministic ID based on name, detected type, and category path
+        category_str = isempty(base_category) ? "" : join(base_category, "_")
+        model_id = "models:$(category_str)_$(device_type)_$(name)"
         
         # Determine port layout using heuristics based on port names
         port_layout = determine_port_layout(ports)
@@ -333,7 +364,7 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
         model_def = Dict{String, Any}(
             "_id" => model_id,
             "name" => string(name),
-            "type" => "ckt",  # subcircuits are always circuit type
+            "type" => device_type,
             "category" => base_category,
             "ports" => port_layout,
             "templates" => Dict(
@@ -362,6 +393,62 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
 end
 
 # Helper function to map SPICE device types directly to Mosaic types
+"""
+    detect_device_type_from_name(name::Symbol) -> String
+
+Detect the actual device type from a subcircuit name using common naming patterns.
+Returns the Mosaic device type (e.g., "nmos", "pmos", "resistor", etc.) or "ckt" for generic circuits.
+
+Common patterns detected:
+- MOSFET: names containing "nfet", "pfet", "nmos", "pmos"  
+- BJT: names containing "npn", "pnp", "bjt"
+- Resistors: names containing "res", "resistor", "nplus", "pplus", "poly", "rm", "tm"
+- Capacitors: names containing "cap", "capacitor", "mim", or various vendor-specific part numbers
+- Diodes: names containing "diode", "dio"
+"""
+function detect_device_type_from_name(name::Symbol)
+    name_str = lowercase(string(name))
+    
+    # MOSFET patterns
+    if occursin("nfet", name_str) || occursin("nmos", name_str)
+        return "nmos"
+    elseif occursin("pfet", name_str) || occursin("pmos", name_str)  
+        return "pmos"
+    
+    # BJT patterns
+    elseif occursin("npn", name_str)
+        return "npn"
+    elseif occursin("pnp", name_str)
+        return "pnp"
+    elseif occursin("bjt", name_str)
+        return "npn"  # Default to NPN for generic BJT
+    
+    # Resistor patterns - more specific patterns only
+    elseif occursin("res", name_str) || occursin("resistor", name_str) || 
+           occursin("nplus", name_str) || occursin("pplus", name_str) || 
+           occursin("nwell", name_str) || occursin("poly", name_str) ||
+           occursin("rm", name_str) || occursin("tm", name_str)
+        return "resistor"
+    
+    # Capacitor patterns - more specific patterns only  
+    elseif occursin("cap", name_str) || occursin("capacitor", name_str) ||
+           occursin("mim", name_str)
+        return "capacitor"
+    
+    # Diode patterns - more specific patterns only
+    elseif occursin("diode", name_str) || occursin("dio", name_str)
+        return "diode"
+    
+    # Inductor patterns - more specific patterns only
+    elseif occursin("ind", name_str) || occursin("inductor", name_str)
+        return "inductor"
+    
+    # Default to generic circuit
+    else
+        return "ckt"
+    end
+end
+
 """
     determine_port_layout(ports::Vector{Symbol}) -> Dict{String, Vector{String}}
 
@@ -526,16 +613,21 @@ function process_archive(config::ArchiveConfig)
             
             try
                 # Extract definitions from file
-                models, subcircuits = extract_definitions_from_file(full_path; lib_section=config.lib_section, max_depth=config.max_depth)
+                models, subcircuits = extract_definitions_from_file(full_path; lib_section=config.lib_section, device_blacklist=config.device_blacklist, encoding=config.encoding)
                 
                 if !isempty(models) || !isempty(subcircuits)
+                    # Check for file-level device type override
+                    filename = basename(relative_path)
+                    file_device_type = get(config.file_device_types, filename, nothing)
+                    
                     # Convert to Mosaic format with archive URL
                     file_result = to_mosaic_format(
                         models, subcircuits;
                         source_file=relative_path,
                         base_category=config.base_category,
                         mode=config.mode,
-                        archive_url=config.url
+                        archive_url=config.url,
+                        file_device_type=file_device_type
                     )
                     
                     # Append results
@@ -558,6 +650,6 @@ function process_archive(config::ArchiveConfig)
 end
 
 
-export extract_definitions, extract_definitions_from_file, to_mosaic_format, process_archive, ArchiveConfig, ExtractionConfig
+export extract_definitions, extract_definitions_from_file, to_mosaic_format, process_archive, ArchiveConfig, ExtractionConfig, detect_device_type_from_name
 
 end # module SpiceArmyKnife
