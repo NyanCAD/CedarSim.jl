@@ -567,42 +567,51 @@ function process_archive(config::ArchiveConfig)
         archive_file = joinpath(temp_dir, "archive")
         Downloads.download(config.url, archive_file)
         
-        # Extract archive using p7zip (handles zip, tar.gz, 7z, etc.)
+        # Try to extract archive using p7zip (handles zip, tar.gz, 7z, etc.)
         extract_dir = joinpath(temp_dir, "extracted")
         mkdir(extract_dir)
-        println("Extracting archive...")
-        
-        # Use p7zip to extract
-        p7zip_exe = p7zip_jll.p7zip_path
-        run(`$p7zip_exe x $archive_file -o$extract_dir -y`)
         
         # Find files to process
         matching_files = Pair{String,String}[]  # full_path => relative_path
         
-        if config.entrypoints === nothing
-            # Auto-discover SPICE files by walking directory tree
-            spice_extensions = [".mod", ".sp", ".lib", ".cir", ".inc", ".txt"]
+        # Use p7zip to extract
+        p7zip_exe = p7zip_jll.p7zip_path
+        
+        try
+            println("Extracting archive...")
+            run(`$p7zip_exe x $archive_file -o$extract_dir -y`)
             
-            for (root, dirs, files) in walkdir(extract_dir)
-                for file in files
-                    _, ext = splitext(lowercase(file))
-                    if ext in spice_extensions
-                        full_path = joinpath(root, file)
-                        relative_path = relpath(full_path, extract_dir)
+            # Archive extraction succeeded - find files to process
+            if config.entrypoints === nothing
+                # Auto-discover SPICE files by walking directory tree
+                spice_extensions = [".mod", ".sp", ".lib", ".cir", ".inc", ".txt"]
+                
+                for (root, dirs, files) in walkdir(extract_dir)
+                    for file in files
+                        _, ext = splitext(lowercase(file))
+                        if ext in spice_extensions
+                            full_path = joinpath(root, file)
+                            relative_path = relpath(full_path, extract_dir)
+                            push!(matching_files, full_path => relative_path)
+                        end
+                    end
+                end
+            else
+                # Use specific relative paths provided by user
+                for relative_path in config.entrypoints
+                    full_path = joinpath(extract_dir, relative_path)
+                    if isfile(full_path)
                         push!(matching_files, full_path => relative_path)
+                    else
+                        println("Warning: specified file not found: $relative_path")
                     end
                 end
             end
-        else
-            # Use specific relative paths provided by user
-            for relative_path in config.entrypoints
-                full_path = joinpath(extract_dir, relative_path)
-                if isfile(full_path)
-                    push!(matching_files, full_path => relative_path)
-                else
-                    println("Warning: specified file not found: $relative_path")
-                end
-            end
+            
+        catch ProcessFailedException
+            # Not an archive - treat downloaded file as single SPICE file
+            println("Not an archive, processing as bare SPICE file")
+            push!(matching_files, archive_file => basename(config.url))
         end
         
         println("Found $(length(matching_files)) matching files")
