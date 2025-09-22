@@ -14,11 +14,8 @@ struct BuiltinFunc <: Terminal; end
 struct BuiltinConst <: Terminal; end
 struct Literal <: Terminal; end
 struct StringLiteral <: Terminal; end
-struct FloatLiteral <: Terminal; end
-struct IntLiteral <: Terminal; end
-struct UnitLiteral <: Terminal; end
+struct NumberLiteral <: Terminal; end
 struct JuliaEscapeBody <: Terminal; end
-isunit(::UnitLiteral) = true
 
 @enum(ErrorKind,
     UnexpectedToken,
@@ -98,11 +95,7 @@ end
 
 # TODO: https://cseweb.ucsd.edu/classes/wi10/cse241a/assign/hspice_sa.pdf page 42
 struct NodeName <: AbstractASTNode
-    name::Union{EXPR{Identifier}, EXPR{IntLiteral}}
-end
-struct NumericValue <: AbstractASTNode
-    val::Union{EXPR{IntLiteral}, EXPR{FloatLiteral}}
-    unit::Maybe{EXPR{UnitLiteral}}
+    name::Union{EXPR{Identifier}, EXPR{NumberLiteral}}
 end
 
 struct UnaryOp <: AbstractASTNode
@@ -474,7 +467,7 @@ struct DataStatement <: AbstractASTNode
     kw::EXPR{Keyword}
     blockname::EXPR{Identifier}
     row_names::EXPRList{Identifier}
-    values::EXPRList{NumericValue}
+    values::EXPRList{NumberLiteral}
     nl::EXPR{Notation}
     dot2::EXPR{Notation}
     endkw::EXPR{Keyword}
@@ -528,7 +521,7 @@ end
 struct RiseFallCross <: AbstractASTNode
     type::EXPR{Keyword}
     eq::EXPR{Notation}
-    val::Union{EXPR{Keyword}, EXPR{IntLiteral}}
+    val::Union{EXPR{Keyword}, EXPR{NumberLiteral}}
 end
 
 # TODO: Rename
@@ -608,10 +601,10 @@ struct Tran <: AbstractASTNode
     dot::EXPR{Notation}
     kw::EXPR{Keyword}
     # TODO: Fixup, just temporary for now
-    tstep::Union{Nothing, EXPR{NumericValue}}
-    tstop::EXPR{NumericValue}
-    tstart::Union{Nothing, EXPR{NumericValue}}
-    tmax::Union{Nothing, EXPR{NumericValue}}
+    tstep::Union{Nothing, EXPR{NumberLiteral}}
+    tstop::EXPR{NumberLiteral}
+    tstart::Union{Nothing, EXPR{NumberLiteral}}
+    tmax::Union{Nothing, EXPR{NumberLiteral}}
     uic::Union{Nothing, EXPR{Identifier}}
     nl::EXPR{Notation}
 end

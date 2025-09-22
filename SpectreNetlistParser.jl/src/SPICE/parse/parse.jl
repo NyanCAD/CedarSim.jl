@@ -70,19 +70,19 @@ end
 
 function parse_tran(ps, dot)
     kw = take_kw(ps, TRAN)
-    tstep_or_stop = EXPR(NumericValue(take_literal(ps), maybe_take_unit(ps)))
+    tstep_or_stop = take_literal(ps)
     tstop = if is_literal(kind(nt(ps)))
         tstep = tstep_or_stop
-        EXPR(NumericValue(take_literal(ps), maybe_take_unit(ps)))
+        take_literal(ps)
     else
         tstep = nothing
         tstep_or_stop
     end
     tstart = if is_literal(kind(nt(ps)))
-        EXPR(NumericValue(take_literal(ps), maybe_take_unit(ps)))
+        take_literal(ps)
     end
     tmax = if is_literal(kind(nt(ps)))
-        EXPR(NumericValue(take_literal(ps), maybe_take_unit(ps)))
+        take_literal(ps)
     end
     uic = if is_ident(kind(nt(ps)))
         take_identifier(ps)
@@ -212,7 +212,7 @@ end
 function parse_ic_statement(ps)
     if kind(nt(ps)) == STAR
         return EXPR(WildCard(nothing, take(ps, STAR)))
-    elseif kind(nt(ps)) == INT_LIT
+    elseif kind(nt(ps)) == NUMBER
         int = take_literal(ps)
         if kind(nt(ps)) == STAR
             return EXPR(WildCard(int, take(ps, STAR)))
@@ -270,10 +270,10 @@ function parse_data(ps, dot)
         n_rows += 1
     end
 
-    values = EXPRList{NumericValue}()
+    values = EXPRList{NumberLiteral}()
     while !eol(ps)
         for i in 1:n_rows
-            push!(values, EXPR(NumericValue(take_literal(ps), maybe_take_unit(ps))))
+            push!(values, take_literal(ps))  # NumberLiteral directly
         end
     end
 
@@ -299,7 +299,7 @@ function parse_width(ps, dot)
 end
 
 function parse_node(ps)
-    if kind(nt(ps)) == INT_LIT
+    if kind(nt(ps)) == NUMBER
         return EXPR(NodeName(take_literal(ps)))
     elseif is_ident(kind(nt(ps)))
         return EXPR(NodeName(take_identifier(ps)))
@@ -348,7 +348,7 @@ end
 function parse_model(ps, dot)
     kw = take_kw(ps, MODEL)
     name = parse_hierarchial_node(ps)
-    typ = take_identifier(ps)
+    typ = take_identifier_or_number(ps)  # Model types can start with digits
     parameters = parse_parameter_list(ps)
     nl = accept_newline(ps)
     return EXPR(Model(dot, kw, name, typ, parameters, nl))
@@ -515,7 +515,7 @@ function parse_primary(ps)
     if is_number(kind(nt(ps)))
         lit = take_literal(ps)
         # TODO: Units?
-        return EXPR(NumericValue(lit, maybe_take_unit(ps)))
+        return lit
     elseif is_literal(kind(nt(ps)))
         return take_literal(ps)
     elseif is_ident(kind(nt(ps)))
@@ -1015,19 +1015,26 @@ function take_identifier(ps)
     return EXPR!(Identifier(), ps)
 end
 
+function take_identifier_or_number(ps)
+    # Accept either an identifier or a number token (for model names like "1N3064")
+    if is_ident(kind(nt(ps)))
+        return EXPR!(Identifier(), ps)
+    elseif kind(nt(ps)) == NUMBER
+        return EXPR!(NumberLiteral(), ps)
+    else
+        error!(ps, UnexpectedToken)
+    end
+end
+
 function take_literal(ps)
     ntkind = kind(nt(ps))
     @assert is_literal(ntkind)
-    EXPR!(ntkind == FLOAT ? FloatLiteral() :
-          ntkind == INT_LIT ? IntLiteral()   :
-          ntkind == UNIT  ? UnitLiteral()  :
+    EXPR!(ntkind == NUMBER ? NumberLiteral() :
           Literal(), ps)
 end
 
 function maybe_take_unit(ps)
-    if kind(nt(ps)) == UNIT
-        EXPR!(UnitLiteral(), ps)
-    end
+    # This function is now a no-op
 end
 
 function accept_identifier(ps)

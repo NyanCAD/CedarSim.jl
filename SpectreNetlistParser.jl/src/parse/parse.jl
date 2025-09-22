@@ -163,7 +163,7 @@ function parse_node(ps)
 end
 
 function take_node(ps)
-    if kind(nt(ps)) == INT_LIT
+    if kind(nt(ps)) == NUMBER
         return take_literal(ps)
     elseif is_ident(kind(nt(ps)))
         return take_identifier(ps)
@@ -471,12 +471,7 @@ end
 
 function parse_primary(ps)
     if is_number(kind(nt(ps)))
-        lit = take_literal(ps)
-        unit = nothing
-        if kind(nt(ps)) == UNIT
-            unit = take_literal(ps)
-        end
-        return EXPR(NumericValue(lit, unit))
+        return take_literal(ps)
     elseif is_literal(kind(nt(ps)))
         return take_literal(ps)
     elseif is_builtin_const(kind(nt(ps)))
@@ -613,9 +608,7 @@ end
 function take_literal(ps)
     ntkind = kind(nt(ps))
     @assert is_literal(ntkind)
-    EXPR!(ntkind == FLOAT ? FloatLiteral() :
-          ntkind == INT_LIT ? IntLiteral()   :
-          ntkind == UNIT  ? UnitLiteral()  :
+    EXPR!(ntkind == NUMBER ? NumberLiteral() :
           Literal(), ps)
 end
 

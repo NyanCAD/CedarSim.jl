@@ -15,10 +15,7 @@ struct BuiltinFunc <: Terminal; end
 struct BuiltinConst <: Terminal; end
 struct Literal <: Terminal; end
 struct StringLiteral <: Terminal; end
-struct FloatLiteral <: Terminal; end
-struct IntLiteral <: Terminal; end
-struct UnitLiteral <: Terminal; end
-isunit(::UnitLiteral) = true
+struct NumberLiteral <: Terminal; end
 
 @enum(ErrorKind,
     UnexpectedToken,
@@ -51,11 +48,6 @@ end
 # TODO: Since the unit has to come after the number (without) space
 # this breaks the property that we can put spaces between all terminals
 # and have valid source code.
-# Should probably introduce a single UnitfulNumericValue terminal instead
-struct NumericValue <: AbstractASTNode
-    val::Union{EXPR{IntLiteral}, EXPR{FloatLiteral}}
-    unit::Maybe{EXPR{UnitLiteral}}
-end
 
 struct SubcktNode <: AbstractASTNode
     id::EXPR{Identifier}
@@ -64,7 +56,7 @@ end
 
 struct SNode <: AbstractASTNode
     subckts::EXPRList{SubcktNode}
-    node::Union{EXPR{Identifier}, EXPR{IntLiteral}}
+    node::Union{EXPR{Identifier}, EXPR{NumberLiteral}}
 end
 
 ###########
@@ -273,7 +265,7 @@ end
 
 struct SaveSignalModifier <: AbstractASTNode
     colon::EXPR{Notation}
-    modifier::Union{EXPR{Keyword}, EXPR{Identifier}, EXPR{IntLiteral}}
+    modifier::Union{EXPR{Keyword}, EXPR{Identifier}, EXPR{NumberLiteral}}
 end
 
 struct SaveSignal <: AbstractASTNode

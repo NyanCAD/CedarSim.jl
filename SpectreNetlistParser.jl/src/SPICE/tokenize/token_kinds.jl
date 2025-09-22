@@ -64,11 +64,8 @@ end
 
     begin_literal,
         LITERAL, # general
-        UNIT, # F,
         begin_number,
-            INT_LIT, # 4
-            HEX_INT, # 0fff0
-            FLOAT, # 3.5, 3.7e+3
+            NUMBER, # 4, 3.5, 3.7e+3, 1N3064, 1.5k, etc.
         end_number,
         STRING, # "foo"
     end_literal,

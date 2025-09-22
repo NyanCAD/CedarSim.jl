@@ -51,12 +51,6 @@ function next_token(l::Lexer{IO, K}) where {IO, K}
 
     c = readchar(l)
 
-    if is_number(l.last_token)
-        lexed_unit = maybe_lex_unit(l, c)
-        if lexed_unit
-            return emit(l, UNIT)
-        end
-    end
 
     # if the first nontrivial token is not a plus (continuation)
     # clear the stack of expression delimiters
@@ -86,9 +80,10 @@ function next_token(l::Lexer{IO, K}) where {IO, K}
     elseif c == '*'
         return lex_star(l)
     elseif c == '['
+        push!(l.lexing_expression_stack, LSQUARE)
         return emit(l, LSQUARE)
     elseif c == ']'
-        return emit(l, RSQUARE)
+        return lex_rsquare(l)
     elseif c == '{'
         push!(l.lexing_expression_stack, LBRACE)
         return emit(l, LBRACE)
@@ -137,12 +132,10 @@ function next_token(l::Lexer{IO, K}) where {IO, K}
         return emit(l, PLUS)
     elseif c == '-'
         return emit(l, MINUS)
-    elseif ishex(c) && l.last_nontriv_token == HEX_BASE_SPEC
-        return lex_hex(l)
     elseif is_identifier_start_char(c)
         return lex_identifier(l, c)
     elseif isdigit(c)
-        return lex_digit(l, INT_LIT)
+        return lex_number(l)
     else
         emit(l, UNKNOWN)
     end
@@ -155,6 +148,12 @@ function lex_rbrace(l::Lexer)
         pop!(l.lexing_expression_stack)
     end
     return emit(l, RBRACE)
+end
+
+function lex_rsquare(l::Lexer)
+    @assert lastis(l.lexing_expression_stack, LSQUARE)
+    pop!(l.lexing_expression_stack)
+    return emit(l, RSQUARE)
 end
 
 function lex_comma(l::Lexer)
@@ -284,7 +283,7 @@ function lex_dot(l::Lexer)
         return emit(l, DOT)
     end
     if Base.isdigit(peekchar(l))
-        return lex_digit(l, FLOAT)
+        return lex_number(l)
     else
         t = emit(l, DOT)
         return t
@@ -374,54 +373,54 @@ function accept_number(l::Lexer, f::F) where {F}
     end
 end
 
-is_scale_factor(c) = c in ('T', 'G', 'K', 'M', 'U', 'N', 'P', 'F', 'A')
-function accept_float(l, pc, ppc)
-    ok = false
-    if (pc == 'e' || pc == 'E') && (isdigit(ppc) || ppc == '+' || ppc == '-')
+function lex_number(l::Lexer)
+    # Accept digits
+    while isdigit(peekchar(l))
         readchar(l)
-        accept(l, "+-")
-        accept_number(l, isdigit)
-        ok = true
     end
-    pc, ppc = dpeekchar(l)
-    if is_scale_factor(pc) && (pc, ppc) != ('A', 'M'#=, 'P'=#)
+
+    # Accept decimal point and more digits
+    if peekchar(l) == '.'
         readchar(l)
-        if dpeekchar(l) == ('E', 'G') || dpeekchar(l) == ('I', 'L')
-            readchar(l)
+        while isdigit(peekchar(l))
             readchar(l)
         end
-        ok = true
     end
-    return ok
-end
 
-function maybe_lex_unit(l, c)
-    unit = isletter(c)
-    while unit && isletter(peekchar(l))
-        readchar(l)
-        unit = true
-    end
-    return unit
-end
-
-# A digit has been consumed
-function lex_digit(l::Lexer, kind)
-    accept_number(l, isdigit)
+    # Accept base specifiers (e.g., 123'hAB) or scientific notation
     pc, ppc = dpeekchar(l)
-    if pc == '.'
-        readchar(l)
-        kind = FLOAT
-        accept_number(l, isdigit)
-        accept_float(l, dpeekchar(l)...)
-    elseif accept_float(l, pc, ppc)
-        kind = FLOAT
+    if pc == '\'' && is_base_char(ppc)
+        readchar(l)  # consume '\''
+        readchar(l)  # consume base char
+        # Accept hex chars (covers all bases)
+        while ishex(peekchar(l))
+            readchar(l)
+        end
+    elseif pc == 'e' || pc == 'E'
+        # Scientific notation (e.g., 1.5e-3, 2E+5)
+        readchar(l)  # consume 'e' or 'E'
+        pc = peekchar(l)
+        if pc == '+' || pc == '-'
+            readchar(l)  # consume '+' or '-'
+        end
+        # Must have digits after e/E
+        while isdigit(peekchar(l))
+            readchar(l)
+        end
     end
-    return emit(l, kind)
-end
 
-function lex_hex(l::Lexer)
-    accept_number(l, ishex)
-    return emit(l, HEX_INT)
+    # Accept scale factors, units, and additional identifier chars (context-sensitive like lex_identifier)
+    while true
+        pc = peekchar(l)
+        if (is_identifier_char(pc) && !isempty(l.lexing_expression_stack)) ||
+           (is_instance_char(pc) && isempty(l.lexing_expression_stack))
+            readchar(l)
+        else
+            break
+        end
+    end
+
+    return emit(l, NUMBER)
 end
 
 is_signed_char(c) = c in ('s', 'S')

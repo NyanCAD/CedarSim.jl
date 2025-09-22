@@ -26,12 +26,6 @@ Returns the next `Token`.
 function next_token(l::Lexer{IO, K})::Token{K} where {IO, K}
     c = Lexers.readchar(l)
 
-    if is_literal(l.last_token)
-        lexed_unit = maybe_lex_unit(l, c)
-        if lexed_unit
-            return emit(l, UNIT)
-        end
-    end
 
     if eof(c);
         return emit(l, ENDMARKER)
@@ -101,12 +95,10 @@ function next_token(l::Lexer{IO, K})::Token{K} where {IO, K}
         return emit(l, PLUS)
     elseif c == '-'
         return emit(l, MINUS)
-    elseif ishex(c) && l.last_nontriv_token == HEX_BASE_SPEC
-        return lex_hex(l)
     elseif is_identifier_start_char(c)
         return lex_identifier(l, c)
     elseif isdigit(c)
-        return lex_digit(l, INT_LIT)
+        return lex_number(l)
     else
         emit(l, UNKNOWN)
     end
@@ -201,7 +193,7 @@ end
 
 function lex_dot(l::Lexer)
     if Base.isdigit(peekchar(l))
-        return lex_digit(l, FLOAT)
+        return lex_number(l)
     else
         return emit(l, DOT)
     end
@@ -304,24 +296,55 @@ function maybe_lex_unit(l, c)
 end
 
 # A digit has been consumed
-function lex_digit(l::Lexer, kind)
-    accept_number(l, isdigit)
-    pc, ppc = dpeekchar(l)
-    if pc == '.'
+function lex_number(l::Lexer)
+    # Accept digits
+    while isdigit(peekchar(l))
         readchar(l)
-        kind = FLOAT
-        accept_number(l, isdigit)
-        accept_float(l, dpeekchar(l)...)
-    elseif accept_float(l, pc, ppc)
-        kind = FLOAT
     end
-    return emit(l, kind)
+
+    # Accept decimal point and more digits
+    if peekchar(l) == '.'
+        readchar(l)
+        while isdigit(peekchar(l))
+            readchar(l)
+        end
+    end
+
+    # Accept base specifiers (e.g., 123'hAB) or scientific notation
+    pc, ppc = dpeekchar(l)
+    if pc == '\'' && is_base_char(ppc)
+        readchar(l)  # consume '\''
+        readchar(l)  # consume base char
+        # Accept hex chars (covers all bases)
+        while ishex(peekchar(l))
+            readchar(l)
+        end
+    elseif pc == 'e' || pc == 'E'
+        # Scientific notation (e.g., 1.5e-3, 2E+5)
+        readchar(l)  # consume 'e' or 'E'
+        pc = peekchar(l)
+        if pc == '+' || pc == '-'
+            readchar(l)  # consume '+' or '-'
+        end
+        # Must have digits after e/E
+        while isdigit(peekchar(l))
+            readchar(l)
+        end
+    end
+
+    # Accept scale factors, units, and identifier chars (for model names like 1N3064)
+    while true
+        pc = peekchar(l)
+        if is_identifier_char(pc)
+            readchar(l)
+        else
+            break
+        end
+    end
+
+    return emit(l, NUMBER)
 end
 
-function lex_hex(l::Lexer)
-    accept_number(l, ishex)
-    return emit(l, HEX_INT)
-end
 
 is_signed_char(c) = c in ('s', 'S')
 is_hex_base_char(c) = c in ('h', 'H')
