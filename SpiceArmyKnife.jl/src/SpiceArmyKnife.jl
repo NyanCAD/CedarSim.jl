@@ -22,8 +22,6 @@ LSymbol(s) = Symbol(lowercase(String(s)))
 Configuration for extracting definitions from SPICE/Spectre AST.
 """
 mutable struct ExtractionConfig
-    models::Vector{Any}
-    subcircuits::Vector{Any}
     parsed_files::Dict{String, Any}
     includepaths::Vector{String}
     libraries::Set{Tuple{String,String}}
@@ -31,22 +29,21 @@ mutable struct ExtractionConfig
     device_blacklist::Union{Regex, Nothing}
     current_file::String
     file_device_types::Dict{String, String}  # filename -> device type override
-    
-    function ExtractionConfig(; models=[], subcircuits=[], parsed_files=Dict{String, Any}(), 
-                            includepaths=String[], libraries=Set{Tuple{String,String}}(), 
+
+    function ExtractionConfig(; parsed_files=Dict{String, Any}(),
+                            includepaths=String[], libraries=Set{Tuple{String,String}}(),
                             lib_section=nothing, device_blacklist=nothing, current_file="",
                             file_device_types=Dict{String, String}())
-        new(models, subcircuits, parsed_files, includepaths, libraries, lib_section, device_blacklist, current_file, file_device_types)
+        new(parsed_files, includepaths, libraries, lib_section, device_blacklist, current_file, file_device_types)
     end
 end
 
 # Helper function to create a new config for includes
 function deeper(config::ExtractionConfig; new_includepaths=nothing, new_file=nothing)
     ExtractionConfig(
-        models=config.models, subcircuits=config.subcircuits, 
-        parsed_files=config.parsed_files, 
+        parsed_files=config.parsed_files,
         includepaths=new_includepaths === nothing ? config.includepaths : new_includepaths,
-        libraries=config.libraries, 
+        libraries=config.libraries,
         lib_section=config.lib_section, device_blacklist=config.device_blacklist,
         current_file=new_file === nothing ? config.current_file : new_file,
         file_device_types=config.file_device_types)
@@ -115,40 +112,73 @@ function extract_definitions_from_file(filepath::String; lib_section=nothing, de
     # Read file with specified encoding
     content = read(filepath, String, encoding)
     ast = SpectreNetlistParser.parse(IOBuffer(content); fname=filepath, implicit_title=false)
-    
+
     config = ExtractionConfig(
         includepaths=[dirname(abspath(filepath))],
         lib_section=lib_section,
         device_blacklist=device_blacklist,
         current_file=filepath
     )
-    
-    extract_definitions(ast, config)
-    return config.models, config.subcircuits
+
+    # Initialize local result vectors
+    models = Vector{Any}()
+    subcircuits = Vector{Any}()
+    error_stats = Dict{String, Int}()
+    failed_files = String[]
+    files_processed = 1  # Start with the main file
+
+    try
+        extract_definitions(ast, config, models, subcircuits, error_stats, failed_files)
+
+        # Count additional files processed through includes
+        files_processed += length(config.parsed_files)
+
+        return (
+            models = models,
+            subcircuits = subcircuits,
+            error_stats = error_stats,
+            failed_files = failed_files,
+            files_processed = files_processed
+        )
+    catch e
+        error_type = string(typeof(e))
+        error_stats[error_type] = get(error_stats, error_type, 0) + 1
+        push!(failed_files, filepath)
+
+        return (
+            models = models,
+            subcircuits = subcircuits,
+            error_stats = error_stats,
+            failed_files = failed_files,
+            files_processed = files_processed
+        )
+    end
 end
 
 """
-    extract_definitions(ast, config::ExtractionConfig)
+    extract_definitions(ast, config::ExtractionConfig, models::Vector{Any}, subcircuits::Vector{Any}, error_stats::Dict{String,Int}, failed_files::Vector{String})
 
 Extract model and subcircuit definitions from a SPICE/Spectre AST using the provided configuration.
+Accumulates results into the provided models and subcircuits vectors.
+Accumulates error statistics into error_stats and failed_files vectors.
 Returns models as (name, type, subtype, code) tuples and subcircuits as (name, ports, parameters, code) tuples.
 For models, subtype indicates polarity (:pmos/:nmos), defaults to :nmos unless 'pchan' or 'pmos' found in parameters.
 For subcircuits, parameters is a list of parameter names from both subckt line and .param statements inside.
 Code is the full source text extracted using String(node).
 """
-function extract_definitions(ast, config::ExtractionConfig)
+function extract_definitions(ast, config::ExtractionConfig, models::Vector{Any}, subcircuits::Vector{Any}, error_stats::Dict{String,Int}, failed_files::Vector{String})
     for stmt in ast.stmts
         if isa(stmt, SNode{SPICENetlistSource})
             # Recurse into netlist source nodes
-            extract_definitions(stmt, config)
+            extract_definitions(stmt, config, models, subcircuits, error_stats, failed_files)
         elseif isa(stmt, SNode{SpectreNetlistSource})
             # Recurse into spectre netlist source nodes
-            extract_definitions(stmt, config)
+            extract_definitions(stmt, config, models, subcircuits, error_stats, failed_files)
         elseif isa(stmt, SNode{SP.LibStatement})
             # Recurse into .lib sections, but filter by lib_section if specified
             section_name = String(stmt.name)
             if config.lib_section === nothing || section_name == config.lib_section
-                extract_definitions(stmt, deeper(config))
+                extract_definitions(stmt, deeper(config), models, subcircuits, error_stats, failed_files)
             end
         elseif isa(stmt, SNode{SP.IncludeStatement})
             # Handle .include statements
@@ -157,9 +187,14 @@ function extract_definitions(ast, config::ExtractionConfig)
                 _, path = resolve_includepath(str, config.includepaths)
                 sa = get!(() -> SpectreNetlistParser.parsefile(path; implicit_title=false), config.parsed_files, path)
                 new_includepaths = [dirname(path), config.includepaths...]
-                extract_definitions(sa, deeper(config; new_includepaths, new_file=path))
+                extract_definitions(sa, deeper(config; new_includepaths, new_file=path), models, subcircuits, error_stats, failed_files)
             catch e
-                println("Warning: Could not process include $str: $e")
+                error_type = string(typeof(e))
+                error_stats[error_type] = get(error_stats, error_type, 0) + 1
+                push!(failed_files, path)
+                print("Warning: Could not process include $str: ")
+                showerror(stdout, e)
+                println()
             end
         elseif isa(stmt, SNode{SP.LibInclude})
             # Handle .lib statements (includes with section)
@@ -174,13 +209,18 @@ function extract_definitions(ast, config::ExtractionConfig)
                     sa = extract_section_from_lib(p; section)
                     if sa !== nothing
                         new_includepaths = [dirname(path), config.includepaths...]
-                        extract_definitions(sa, deeper(config; new_includepaths, new_file=path))
+                        extract_definitions(sa, deeper(config; new_includepaths, new_file=path), models, subcircuits, error_stats, failed_files)
                     else
                         println("Warning: Unable to find section '$section' in $str")
                     end
                 end
             catch e
-                println("Warning: Could not process lib include $str section $section: $e")
+                error_type = string(typeof(e))
+                error_stats[error_type] = get(error_stats, error_type, 0) + 1
+                push!(failed_files, path)
+                print("Warning: Could not process lib include $str section $section: ")
+                showerror(stdout, e)
+                println()
             end
         elseif isa(stmt, SNode{SP.Model})
             name = LSymbol(stmt.name)
@@ -193,7 +233,7 @@ function extract_definitions(ast, config::ExtractionConfig)
             params = [LSymbol(p.name) for p in stmt.parameters]
             subtype = (:pchan in params || :pmos in params) ? :pmos : :nmos
             code = String(stmt)
-            push!(config.models, (name, typ, subtype, code))
+            push!(models, (name, typ, subtype, code))
         elseif isa(stmt, SNode{SC.Model})
             name = LSymbol(stmt.name)
             # Check if device name matches blacklist pattern
@@ -205,7 +245,7 @@ function extract_definitions(ast, config::ExtractionConfig)
             params = [LSymbol(p.name) for p in stmt.parameters]
             subtype = (:pchan in params || :pmos in params) ? :pmos : :nmos
             code = String(stmt)
-            push!(config.models, (name, typ, subtype, code))
+            push!(models, (name, typ, subtype, code))
         elseif isa(stmt, SNode{SP.Subckt})
             name = LSymbol(stmt.name)
             # Check if device name matches blacklist pattern
@@ -218,7 +258,7 @@ function extract_definitions(ast, config::ExtractionConfig)
             # Add parameters from .param statements inside subcircuit
             extract_subckt_params!(stmt, params)
             code = String(stmt)
-            push!(config.subcircuits, (name, ports, params, code))
+            push!(subcircuits, (name, ports, params, code))
         elseif isa(stmt, SNode{SC.Subckt})
             name = LSymbol(stmt.name)
             # Check if device name matches blacklist pattern
@@ -230,10 +270,10 @@ function extract_definitions(ast, config::ExtractionConfig)
             # Add parameters from .param statements inside subcircuit
             extract_subckt_params!(stmt, params)
             code = String(stmt)
-            push!(config.subcircuits, (name, ports, params, code))
+            push!(subcircuits, (name, ports, params, code))
         end
     end
-    return config.models, config.subcircuits
+    return models, subcircuits
 end
 
 function extract_subckt_params!(subckt, params)
@@ -557,7 +597,12 @@ Process an archive using the specified configuration.
 """
 function process_archive(config::ArchiveConfig)
     result = Vector{Dict{String, Any}}()
-    
+
+    # Track statistics
+    error_stats = Dict{String, Int}()
+    failed_files = String[]
+    files_processed = 0
+
     # Create temporary directory for extraction
     temp_dir = mktempdir()
     
@@ -619,33 +664,45 @@ function process_archive(config::ArchiveConfig)
         # Process each matching file
         for (full_path, relative_path) in matching_files
             println("Processing $relative_path...")
-            
+            files_processed += 1
+
             try
                 # Extract definitions from file
-                models, subcircuits = extract_definitions_from_file(full_path; lib_section=config.lib_section, device_blacklist=config.device_blacklist, encoding=config.encoding)
-                
-                if !isempty(models) || !isempty(subcircuits)
+                extraction_result = extract_definitions_from_file(full_path; lib_section=config.lib_section, device_blacklist=config.device_blacklist, encoding=config.encoding)
+
+                # Merge error statistics
+                for (error_type, count) in extraction_result.error_stats
+                    error_stats[error_type] = get(error_stats, error_type, 0) + count
+                end
+                append!(failed_files, extraction_result.failed_files)
+
+                if !isempty(extraction_result.models) || !isempty(extraction_result.subcircuits)
                     # Check for file-level device type override
                     filename = basename(relative_path)
                     file_device_type = get(config.file_device_types, filename, nothing)
-                    
+
                     # Convert to Mosaic format with archive URL
                     file_result = to_mosaic_format(
-                        models, subcircuits;
+                        extraction_result.models, extraction_result.subcircuits;
                         source_file=relative_path,
                         base_category=config.base_category,
                         mode=config.mode,
                         archive_url=config.url,
                         file_device_type=file_device_type
                     )
-                    
+
                     # Append results
                     append!(result, file_result)
-                    
-                    println("  - Found $(length(models)) models, $(length(subcircuits)) subcircuits")
+
+                    println("  - Found $(length(extraction_result.models)) models, $(length(extraction_result.subcircuits)) subcircuits")
                 end
             catch e
-                println("  - Error parsing $relative_path: $e")
+                error_type = string(typeof(e))
+                error_stats[error_type] = get(error_stats, error_type, 0) + 1
+                push!(failed_files, relative_path)
+                print("  - Error parsing $relative_path: ")
+                showerror(stdout, e)
+                println()
             end
         end
         
@@ -653,9 +710,28 @@ function process_archive(config::ArchiveConfig)
         # Clean up temporary directory
         rm(temp_dir, recursive=true, force=true)
     end
-    
+
     println("Archive processing complete. Generated $(length(result)) total model entries.")
-    return result
+
+    # Print error statistics if any errors occurred
+    if !isempty(error_stats)
+        println("\nError Statistics:")
+        for (error_type, count) in sort(collect(error_stats), by=x->x[2], rev=true)
+            println("  $error_type: $count occurrences")
+        end
+        println("\nFailed files ($(length(failed_files)) total):")
+        for file in failed_files
+            println("  - $file")
+        end
+    end
+
+    return (
+        mosaic_models = result,
+        error_stats = error_stats,
+        failed_files = failed_files,
+        files_processed = files_processed,
+        models_generated = length(result)
+    )
 end
 
 
