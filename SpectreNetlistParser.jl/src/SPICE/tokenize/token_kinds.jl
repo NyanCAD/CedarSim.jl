@@ -207,6 +207,7 @@ end
             AM,
             TRNOISE,
             TRRANDOM,
+            POLY,
         end_sources,
     end_keywords,
 

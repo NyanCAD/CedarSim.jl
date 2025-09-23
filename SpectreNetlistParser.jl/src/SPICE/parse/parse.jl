@@ -356,7 +356,7 @@ end
 
 function parse_subckt(ps, dot)
     kw = take_kw(ps, SUBCKT)
-    name = take_identifier(ps)
+    name = take_identifier_or_number(ps)
     nodes = EXPRList{NodeName}()
     parameters = EXPRList{Parameter}()
     while !eol(ps)
@@ -373,7 +373,7 @@ function parse_subckt(ps, dot)
             dot2 = take(ps, DOT)
             if kind(nt(ps)) == ENDS
                 ends = take_kw(ps, ENDS)
-                name_end = eol(ps) ? nothing : take_identifier(ps)
+                name_end = eol(ps) ? nothing : take_identifier_or_number(ps)
                 nl2 = accept_newline(ps)
                 return EXPR(Subckt(dot, kw, name, nodes, parameters, nl, exprs, dot2, ends, name_end, nl2))
             else
@@ -795,12 +795,35 @@ function parse_voltage_controlled(cs, ps)
     pos = parse_node(ps)
     neg = parse_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
-    cpos = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
-    cneg = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
-    val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
-    return EXPR(cs(name, pos, neg, cpos, cneg, val, params, nl))
+
+    # Check if this is a POLY expression
+    if kind(nt(ps)) == POLY
+        # Parse POLY expression: POLY(N) control_nodes... coefficients...
+        # Note: parentheses are treated as token separators and not emitted as tokens
+        poly_token = take_kw(ps, POLY)
+        n_dims_token = take_literal(ps)  # Should be a number literal
+
+        # Parse all remaining arguments into one big list
+        # This includes: control_nodes + coefficients
+        args = EXPRList{Any}()
+        while !eol(ps)
+            push!(args, parse_expression(ps))
+        end
+
+        # Create a special POLY expression structure
+        poly_expr = EXPR(PolyExpression(poly_token, n_dims_token, args))
+
+        nl = accept_newline(ps)
+        return EXPR(cs(name, pos, neg, nothing, nothing, poly_expr, EXPRList{Parameter}(), nl))
+    else
+        # Standard voltage controlled source parsing
+        cpos = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
+        cneg = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
+        val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
+        params = parse_parameter_list(ps)
+        nl = accept_newline(ps)
+        return EXPR(cs(name, pos, neg, cpos, cneg, val, params, nl))
+    end
 end
 
 function parse_current_controlled(cs, ps)
@@ -808,11 +831,34 @@ function parse_current_controlled(cs, ps)
     pos = parse_node(ps)
     neg = parse_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
-    vnam = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
-    val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
-    return EXPR(cs(name, pos, neg, vname, val, params, nl))
+
+    # Check if this is a POLY expression
+    if kind(nt(ps)) == POLY
+        # Parse POLY expression: POLY(N) control_nodes... coefficients...
+        # Note: parentheses are treated as token separators and not emitted as tokens
+        poly_token = take_kw(ps, POLY)
+        n_dims_token = take_literal(ps)  # Should be a number literal
+
+        # Parse all remaining arguments into one big list
+        # This includes: control_nodes + coefficients
+        args = EXPRList{Any}()
+        while !eol(ps)
+            push!(args, parse_expression(ps))
+        end
+
+        # Create a special POLY expression structure
+        poly_expr = EXPR(PolyExpression(poly_token, n_dims_token, args))
+
+        nl = accept_newline(ps)
+        return EXPR(cs(name, pos, neg, nothing, poly_expr, EXPRList{Parameter}(), nl))
+    else
+        # Standard current controlled source parsing
+        vnam = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
+        val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
+        params = parse_parameter_list(ps)
+        nl = accept_newline(ps)
+        return EXPR(cs(name, pos, neg, vnam, val, params, nl))
+    end
 end
 
 function parse_behavioral(ps)

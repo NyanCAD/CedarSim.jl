@@ -120,6 +120,12 @@ struct GlobalStatement <: AbstractASTNode
     nl::EXPR{Notation}
 end
 
+struct PolyExpression <: AbstractASTNode
+    poly_token::EXPR{Keyword}
+    dimensions::EXPR{NumberLiteral}  # The N in POLY(N)
+    args::EXPRList   # All remaining arguments (control nodes + coefficients)
+end
+
 struct BinaryExpression <: AbstractASTNode
     lhs::EXPR
     op::EXPR{Operator}
@@ -434,14 +440,14 @@ end
 struct Subckt <: AbstractBlockASTNode
     dot::EXPR{Notation}
     kw::EXPR{Keyword}
-    name::EXPR{Identifier}
+    name::Union{EXPR{Identifier}, EXPR{NumberLiteral}}
     subckt_nodes::EXPRList{NodeName}
     parameters::EXPRList{Parameter}
     nl1::EXPR{Notation}
     stmts::EXPRList
     dot2::EXPR{Notation}
     ends::EXPR{Keyword}
-    name_end::Union{Nothing,EXPR{Identifier}}
+    name_end::Union{Nothing,EXPR{Identifier},EXPR{NumberLiteral}}
     nl2::EXPR{Notation}
 end
 
