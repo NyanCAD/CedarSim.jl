@@ -208,6 +208,7 @@ end
             TRNOISE,
             TRRANDOM,
             POLY,
+            TABLE,
         end_sources,
     end_keywords,
 

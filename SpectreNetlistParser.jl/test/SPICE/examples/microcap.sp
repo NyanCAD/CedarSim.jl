@@ -30,5 +30,6 @@ VCC VCC GND 5V
 * Test POLY expressions for voltage and current controlled sources
 EOS 7 1 POLY(1) 16 49 2E-3 1
 F6 50 99 POLY(1) V6 300U 1
+GD16 16 1 TABLE {V(16,1)} ((-100,-1p)(0,0)(1m,1u)(2m,1m))
 
 .END

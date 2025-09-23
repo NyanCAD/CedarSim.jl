@@ -752,10 +752,10 @@ function parse_instance(ps)
         IDENTIFIER_RESISTOR => parse_resistor(ps)
         IDENTIFIER_VOLTAGE => parse_voltage(ps)
         IDENTIFIER_CURRENT => parse_current(ps)
-        IDENTIFIER_VOLTAGE_CONTROLLED_CURRENT => parse_voltage_controlled(VCCS, ps)
-        IDENTIFIER_VOLTAGE_CONTROLLED_VOLTAGE => parse_voltage_controlled(VCVS, ps)
-        IDENTIFIER_CURRENT_CONTROLLED_CURRENT => parse_current_controlled(CCCS, ps)
-        IDENTIFIER_CURRENT_CONTROLLED_VOLTAGE => parse_current_controlled(CCVS, ps)
+        IDENTIFIER_VOLTAGE_CONTROLLED_CURRENT => parse_controlled(ControlledSource{:V, :C}, ps)
+        IDENTIFIER_VOLTAGE_CONTROLLED_VOLTAGE => parse_controlled(ControlledSource{:V, :V}, ps)
+        IDENTIFIER_CURRENT_CONTROLLED_CURRENT => parse_controlled(ControlledSource{:C, :C}, ps)
+        IDENTIFIER_CURRENT_CONTROLLED_VOLTAGE => parse_controlled(ControlledSource{:C, :V}, ps)
         IDENTIFIER_BEHAVIORAL => parse_behavioral(ps)
         IDENTIFIER_MOSFET => parse_mosfet(ps)
         IDENTIFIER_S_PARAMETER_ELEMENT => parse_s_parameter_element(ps)
@@ -790,7 +790,7 @@ function parse_inductor(ps)
     return EXPR(Inductor(name, pos, neg, val, params, nl))
 end
 
-function parse_voltage_controlled(cs, ps)
+function parse_controlled(cs::Type{ControlledSource{in, out}}, ps) where {in, out}
     name = parse_node(ps)
     pos = parse_node(ps)
     neg = parse_node(ps)
@@ -811,53 +811,42 @@ function parse_voltage_controlled(cs, ps)
         end
 
         # Create a special POLY expression structure
-        poly_expr = EXPR(PolyExpression(poly_token, n_dims_token, args))
+        poly_expr = EXPR(PolyControl(poly_token, n_dims_token, args))
 
         nl = accept_newline(ps)
-        return EXPR(cs(name, pos, neg, nothing, nothing, poly_expr, EXPRList{Parameter}(), nl))
-    else
+        return EXPR(cs(name, pos, neg, poly_expr, nl))
+    elseif kind(nt(ps)) == TABLE
+        # Table controlled source parsing
+        table_token = take_kw(ps, TABLE)
+        expr = parse_expression(ps)
+        eq = if kind(nt(ps)) == EQ
+                 accept(ps, EQ)
+        end
+        # Parse all remaining number pairs into one big list
+        args = EXPRList{Any}()
+        while !eol(ps)
+            push!(args, parse_expression(ps))
+        end
+        table_expr = EXPR(TableControl(table_token, expr, eq, args))
+        nl = accept_newline(ps)
+        return EXPR(cs(name, pos, neg, table_expr, nl))
+    elseif in == :V
         # Standard voltage controlled source parsing
         cpos = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
         cneg = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
         val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
         params = parse_parameter_list(ps)
+        expr = EXPR(VoltageControl(cpos, cneg, val, params))
         nl = accept_newline(ps)
-        return EXPR(cs(name, pos, neg, cpos, cneg, val, params, nl))
-    end
-end
-
-function parse_current_controlled(cs, ps)
-    name = parse_node(ps)
-    pos = parse_node(ps)
-    neg = parse_node(ps)
-    kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
-
-    # Check if this is a POLY expression
-    if kind(nt(ps)) == POLY
-        # Parse POLY expression: POLY(N) control_nodes... coefficients...
-        # Note: parentheses are treated as token separators and not emitted as tokens
-        poly_token = take_kw(ps, POLY)
-        n_dims_token = take_literal(ps)  # Should be a number literal
-
-        # Parse all remaining arguments into one big list
-        # This includes: control_nodes + coefficients
-        args = EXPRList{Any}()
-        while !eol(ps)
-            push!(args, parse_expression(ps))
-        end
-
-        # Create a special POLY expression structure
-        poly_expr = EXPR(PolyExpression(poly_token, n_dims_token, args))
-
-        nl = accept_newline(ps)
-        return EXPR(cs(name, pos, neg, nothing, poly_expr, EXPRList{Parameter}(), nl))
-    else
+        return EXPR(cs(name, pos, neg, expr, nl))
+    elseif in == :C
         # Standard current controlled source parsing
         vnam = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
         val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
         params = parse_parameter_list(ps)
+        expr = EXPR(CurrentControl(vnam, val, params))
         nl = accept_newline(ps)
-        return EXPR(cs(name, pos, neg, vnam, val, params, nl))
+        return EXPR(cs(name, pos, neg, expr, nl))
     end
 end
 

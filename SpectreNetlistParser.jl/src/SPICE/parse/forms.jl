@@ -120,12 +120,6 @@ struct GlobalStatement <: AbstractASTNode
     nl::EXPR{Notation}
 end
 
-struct PolyExpression <: AbstractASTNode
-    poly_token::EXPR{Keyword}
-    dimensions::EXPR{NumberLiteral}  # The N in POLY(N)
-    args::EXPRList   # All remaining arguments (control nodes + coefficients)
-end
-
 struct BinaryExpression <: AbstractASTNode
     lhs::EXPR
     op::EXPR{Operator}
@@ -336,30 +330,40 @@ struct Behavioral <: AbstractASTNode
     nl::EXPR{Notation}
 end
 
+abstract type SourceSpecASTNode <: AbstractASTNode end
 
-for output in (:C, :V)
-    @eval struct $(Symbol(:VC, output, :S)) <: AbstractInstanceNode
-        name::EXPR{NodeName}
-        pos::EXPR{NodeName}
-        neg::EXPR{NodeName}
-        cpos::Union{EXPR{NodeName}, Nothing}
-        cneg::Union{EXPR{NodeName}, Nothing}
-        val::Union{EXPR, Nothing} # can be nonlinear (value=)
-        params::EXPRList{Parameter}
-        nl::EXPR{Notation}
-    end
+struct VoltageControl <: SourceSpecASTNode
+    cpos::Union{EXPR{NodeName}, Nothing}
+    cneg::Union{EXPR{NodeName}, Nothing}
+    val::Union{EXPR, Nothing} # can be nonlinear (value=)
+    params::EXPRList{Parameter}
 end
 
-for output in (:C, :V)
-    @eval struct $(Symbol(:CC, output, :S)) <: AbstractInstanceNode
-        name::EXPR{NodeName}
-        pos::EXPR{NodeName}
-        neg::EXPR{NodeName}
-        vnam::Union{EXPR{NodeName}, Nothing}
-        val::Union{EXPR, Nothing} # can be nonlinear (value=)
-        params::EXPRList{Parameter}
-        nl::EXPR{Notation}
-    end
+struct CurrentControl <: SourceSpecASTNode
+    vnam::Union{EXPR{NodeName}, Nothing}
+    val::Union{EXPR, Nothing} # can be nonlinear (value=)
+    params::EXPRList{Parameter}
+end
+
+struct PolyControl <: SourceSpecASTNode
+    poly::EXPR{Keyword}
+    dimensions::EXPR{NumberLiteral}  # The N in POLY(N)
+    args::EXPRList   # All remaining arguments (control nodes + coefficients)
+end
+
+struct TableControl <: SourceSpecASTNode
+    table::EXPR{Keyword}
+    expr::EXPR   # The expression after TABLE
+    eq::Maybe{EXPR{Notation}}
+    args::EXPRList   # (x,y) pairs
+end
+
+struct ControlledSource{in, out} <: AbstractInstanceNode
+    name::EXPR{NodeName}
+    pos::EXPR{NodeName}
+    neg::EXPR{NodeName}
+    val::EXPR{<:SourceSpecASTNode}
+    nl::EXPR{Notation}
 end
 
 struct BipolarTransistor <: AbstractInstanceNode
