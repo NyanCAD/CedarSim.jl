@@ -23,6 +23,7 @@ struct NumberLiteral <: Terminal; end
 
 struct Error <: Terminal
     kind::ErrorKind
+    expected
 end
 
 const Maybe{T} = Union{T, Nothing}
@@ -400,4 +401,32 @@ function EXPR!(val::Terminal, ps)
     next(ps)
     offset = UInt32(ps.t.startbyte - prev)
     return EXPR(fw, offset, UInt32(ps.t.endbyte - ps.t.startbyte + 1), val)
+end
+
+struct PartialStatement <: AbstractASTNode
+    parts::EXPRList
+end
+
+########################
+
+macro lift(expr)
+    esc(quote
+        @isdefined(__accumulated_exprs__) || (__accumulated_exprs__= EXPRList{Any}())
+        let result = $expr
+            if result isa EXPR
+                push!(__accumulated_exprs__, result)
+            elseif result isa EXPRList
+                append!(__accumulated_exprs__, result)
+            elseif result === nothing
+                # do nothing
+            else
+                error("Expected EXPR or EXPRList, got $(typeof(result))")
+            end
+            if result isa Union{EXPR{Error}, EXPR{PartialStatement}}
+                return EXPR(PartialStatement(__accumulated_exprs__))
+            else
+                result
+            end
+        end
+    end)
 end

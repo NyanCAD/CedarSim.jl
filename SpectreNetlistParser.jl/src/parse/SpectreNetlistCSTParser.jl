@@ -55,6 +55,7 @@ function parse(ps::ParseState; start_lang, enable_julia_escape::Bool=false, impl
         ps_spice = SPICENetlistParser.SPICENetlistCSTParser.ParseState(ps.srcfile; return_on_language_change=true, enable_julia_escape, implicit_title)
         tree_spice = SPICENetlistParser.SPICENetlistCSTParser.parse(ps_spice)
         push!(stmts, tree_spice.expr)
+        ps.errored = ps_spice.errored
         transition_from_spice!(ps, ps_spice)
     end
 
@@ -66,6 +67,7 @@ function parse(ps::ParseState; start_lang, enable_julia_escape::Bool=false, impl
             ps_spice = SPICENetlistParser.SPICENetlistCSTParser.ParseState(ps.srcfile; return_on_language_change=true)
             tree_spice = SPICENetlistParser.SPICENetlistCSTParser.parse(ps_spice)
             push!(stmts, tree_spice.expr)
+            ps.errored |= ps_spice.errored
             transition_from_spice!(ps, ps_spice)
         end
     end
