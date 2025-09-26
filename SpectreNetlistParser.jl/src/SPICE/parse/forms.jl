@@ -342,14 +342,14 @@ end
 abstract type SourceSpecASTNode <: AbstractASTNode end
 
 struct VoltageControl <: SourceSpecASTNode
-    cpos::Union{EXPR{NodeName}, Nothing}
-    cneg::Union{EXPR{NodeName}, Nothing}
+    cpos::Union{EXPR{HierarchialNode}, Nothing}
+    cneg::Union{EXPR{HierarchialNode}, Nothing}
     val::Union{EXPR, Nothing} # can be nonlinear (value=)
     params::EXPRList{Parameter}
 end
 
 struct CurrentControl <: SourceSpecASTNode
-    vnam::Union{EXPR{NodeName}, Nothing}
+    vnam::Union{EXPR{HierarchialNode}, Nothing}
     val::Union{EXPR, Nothing} # can be nonlinear (value=)
     params::EXPRList{Parameter}
 end
@@ -368,9 +368,9 @@ struct TableControl <: SourceSpecASTNode
 end
 
 struct ControlledSource{in, out} <: AbstractInstanceNode
-    name::EXPR{NodeName}
-    pos::EXPR{NodeName}
-    neg::EXPR{NodeName}
+    name::EXPR{HierarchialNode}
+    pos::EXPR{HierarchialNode}
+    neg::EXPR{HierarchialNode}
     val::EXPR{<:SourceSpecASTNode}
     nl::EXPR{Notation}
 end
