@@ -273,17 +273,6 @@ c1 n2 0 1u
 ast = SPICENetlistParser.SPICENetlistCSTParser.parse(no_implicit_title; implicit_title=false)
 @test ast.expr.form.stmts[1].form isa SPICENetlistParser.SPICENetlistCSTParser.Voltage
 
-# Test error
-faulty = """
-
-.FOO
-"""
-e = try SPICENetlistParser.SPICENetlistCSTParser.parse(faulty)
-catch g
-    g
-end
-str = sprint(io -> Base.showerror(io, e))
-@test occursin("SPICEParser error at line 2:\n  .FOO\n", str)
 
 
 # Comment out GF180MCUPDK test that requires CedarSim compilation

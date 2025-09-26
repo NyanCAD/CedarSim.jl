@@ -9,7 +9,7 @@ function parse_spice_toplevel(ps)::EXPR
         SIMULATOR  => return parse_simulator(ps)
         DOT        => return parse_dot(ps)
         TITLE_LINE => return parse_title(ps)
-        NEWLINE    => @assert false "internal error: forgot to eat a newline?"
+        NEWLINE    => return error!(ps, UnexpectedToken, "SPICE statement")
         _          => nothing # fall-through
     end
     if !is_ident(kind(nt(ps)))
@@ -26,6 +26,8 @@ function parse_dot(ps)
 end
 
 function parse_dot(ps, dot)
+    @trysetup AbstractASTNode
+    @trynext dot
     @case kind(nt(ps)) begin
         DC => parse_dc(ps, dot)
         AC => parse_ac(ps, dot)
@@ -48,24 +50,27 @@ function parse_dot(ps, dot)
         TEMP => parse_temp(ps, dot)
         WIDTH => parse_width(ps, dot)
         HDL => parse_hdl(ps, dot)
+        IF => parse_if(ps, dot)
         # TODO: This should return an "unexpected DOT command" error
-        _ => error!(ps, UnexpectedToken)
+        _ => @trynext error!(ps, UnexpectedToken)
     end
 end
 
 function parse_title(ps, dot)
-    kw = take_kw(ps, TITLE)
+    @trysetup Title dot
+    @trynext kw = take_kw(ps, TITLE)
     line = nothing
     if kind(nt(ps)) == TITLE_LINE
-        line = take(ps, TITLE_LINE)
+        @trynext line = take(ps, TITLE_LINE)
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Title(dot, kw, line, nl))
 end
 
 function parse_title(ps)
-    line = take(ps, TITLE_LINE)
-    nl = accept_newline(ps)
+    @trysetup Title
+    @trynext line = take(ps, TITLE_LINE)
+    @trynext nl = accept_newline(ps)
     return EXPR(Title(nothing, nothing, line, nl))
 end
 
@@ -90,15 +95,16 @@ function parse_tran(ps, dot)
     end
     nl = accept_newline(ps)
     if tstep === nothing && ps.lexer.strict && (ps.lexer.spice_dialect in (:ngspice, :hspice))
-        error!(ps, StrictModeViolation)
+        return error!(ps, StrictModeViolation)
     end
     return EXPR(Tran(dot, kw, tstep, tstop, tstart, tmax, uic, nl))
 end
 
 function parse_measure(ps, dot)
-    kw = take_kw(ps, MEASURE)
-    type = take_kw(ps, (AC, DC, OP, TRAN, TF, NOISE))
-    name = if kind(nt(ps)) == STRING
+    @trysetup MeasurePointStatement dot
+    @trynext kw = take_kw(ps, MEASURE)
+    @trynext type = take_kw(ps, (AC, DC, OP, TRAN, TF, NOISE))
+    @trynext name = if kind(nt(ps)) == STRING
         take_string(ps)
     else
         take_identifier(ps)
@@ -112,49 +118,50 @@ function parse_measure(ps, dot)
 end
 
 function parse_trig_targ(ps)
-    kw = take_kw(ps, (TRIG, TARG))
-    lhs = parse_expression(ps)
+    @trysetup TrigTarg
+    @trynext kw = take_kw(ps, (TRIG, TARG))
+    @trynext lhs = parse_expression(ps)
 
     val = nothing
     if kind(nt(ps)) == VAL
-        val_kw = take_kw(ps)
-        eq = take(ps, EQ)
-        rhs = parse_expression(ps)
+        @trynext val_kw = take_kw(ps)
+        @trynext eq = take(ps, EQ)
+        @trynext rhs = parse_expression(ps)
         val = EXPR(Val_(val_kw, eq, rhs))
     end
 
     td = nothing
     if kind(nt(ps)) == TD
-        td = parse_td(ps)
+        @trynext td = parse_td(ps)
     end
 
     rfc = nothing
     if kind(nt(ps)) in (RISE, FALL, CROSS)
-        rfc = parse_risefallcross(ps)
+        @trynext rfc = parse_risefallcross(ps)
     end
     return EXPR(TrigTarg(kw, lhs, val, td, rfc))
 end
 
 function parse_measure_range(ps, dot, kw, type, name)
+    @trysetup MeasureRangeStatement dot kw type name
     avgmaxminpprmsinteg = nothing
 
-    avgmaxminpprmsinteg = nothing
     if kind(nt(ps)) in (AVG, MAX, MIN, PP, RMS, INTEG)
-        kw_op = take_kw(ps)
-        expr = parse_expression(ps)
+        @trynext kw_op = take_kw(ps)
+        @trynext expr = parse_expression(ps)
         avgmaxminpprmsinteg = EXPR(AvgMaxMinPPRmsInteg(kw_op, expr))
     end
 
     trig = nothing
     targ = nothing
     if kind(nt(ps)) == TRIG
-        trig = parse_trig_targ(ps)
+        @trynext trig = parse_trig_targ(ps)
     end
     if kind(nt(ps)) == TARG
-        targ = parse_trig_targ(ps)
+        @trynext targ = parse_trig_targ(ps)
     end
 
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(MeasureRangeStatement(dot, kw, type, name, avgmaxminpprmsinteg, trig, targ, nl))
 end
 
@@ -170,42 +177,52 @@ function parse_risefallcross(ps)
 end
 
 function parse_td(ps)
-    td_kw = take_kw(ps, TD)
-    eq_td = take(ps, EQ)
-    expr = parse_expression(ps)
+    @trysetup TD_
+    @trynext td_kw = take_kw(ps, TD)
+    @trynext eq_td = take(ps, EQ)
+    @trynext expr = parse_expression(ps)
     return EXPR(TD_(td_kw, eq_td, expr))
 end
 
 function parse_measure_point(ps, dot, kw, type, name)
+    @trysetup MeasurePointStatement
+    @trynext dot
+    @trynext kw
+    @trynext type
+    @trynext name
     fdp = nothing
     whenat = nothing
     td = nothing
     rfc = nothing
     if kind(nt(ps)) in (FIND, DERIV, PARAMETERS)
-        fdp_kw = take_kw(ps, (FIND, DERIV, PARAMETERS))
-        eq = kind(nt(ps)) == EQ ? take(ps, EQ) : nothing
-        expr = parse_expression(ps)
+        @trynext fdp_kw = take_kw(ps, (FIND, DERIV, PARAMETERS))
+        eq = if kind(nt(ps)) == EQ
+            @trynext take(ps, EQ)
+        else
+            nothing
+        end
+        @trynext expr = parse_expression(ps)
         fdp = EXPR(FindDerivParam(fdp_kw, eq, expr))
     end
     if kind(nt(ps)) in (WHEN, AT)
         if kind(nt(ps)) == AT
-            at_kw = take_kw(ps)
-            eq = take(ps, EQ)
-            at_expr = parse_expression(ps)
+            @trynext at_kw = take_kw(ps)
+            @trynext eq = take(ps, EQ)
+            @trynext at_expr = parse_expression(ps)
             whenat = EXPR(At(at_kw, eq, at_expr))
         else
-            when_kw = take_kw(ps)
-            when_expr = parse_expression(ps)
+            @trynext when_kw = take_kw(ps)
+            @trynext when_expr = parse_expression(ps)
             whenat = EXPR(When(when_kw, when_expr))
         end
     end
     if kind(nt(ps)) in (RISE, FALL, CROSS)
-        rfc = parse_risefallcross(ps)
+        @trynext rfc = parse_risefallcross(ps)
     end
     if kind(nt(ps)) == TD
-        td = parse_td(ps)
+        @trynext td = parse_td(ps)
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(MeasurePointStatement(dot, kw, type, name, fdp, whenat, rfc, td, nl))
 end
 
@@ -233,20 +250,21 @@ function parse_ic_statement(ps)
 end
 
 function parse_ic(ps, dot)
-    kw = take_kw(ps, IC)
+    @trysetup ICStatement
+    @trynext kw = take_kw(ps, IC)
     entries = EXPRList{ICEntry}()
     while !eol(ps)
-        name = take_identifier(ps)
-        lparen = take(ps, LPAREN)
-        arg = parse_ic_statement(ps)
+        @trynext name = take_identifier(ps)
+        @trynext lparen = take(ps, LPAREN)
+        @trynext arg = parse_ic_statement(ps)
 
-        rparen = take(ps, RPAREN)
-        eq = take(ps, EQ)
-        val = parse_expression(ps)
+        @trynext rparen = take(ps, RPAREN)
+        @trynext eq = take(ps, EQ)
+        @trynext val = parse_expression(ps)
         entry = EXPR(ICEntry(name, lparen, arg, rparen, eq, val))
         push!(entries, entry)
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(ICStatement(dot, kw, entries, nl))
 end
 
@@ -261,51 +279,56 @@ function parse_print(ps, dot)
 end
 
 function parse_data(ps, dot)
-    kw = take_kw(ps, DATA)
-    blockname = take_identifier(ps)
+    @trysetup DataStatement dot
+    @trynext kw = take_kw(ps, DATA)
+    @trynext blockname = take_identifier(ps)
 
     n_rows = 0
     row_names = EXPRList{Identifier}()
     while is_ident(kind(nt(ps)))
-        push!(row_names, take_identifier(ps))
+        @trynext id = take_identifier(ps)
+        push!(row_names, id)
         n_rows += 1
     end
 
     values = EXPRList{NumberLiteral}()
     while !eol(ps)
         for i in 1:n_rows
-            push!(values, take_literal(ps))  # NumberLiteral directly
+            push!(values, @trynext take_literal(ps))  # NumberLiteral directly
         end
     end
 
-    nl = accept_newline(ps)
-    dot2 = take(ps, DOT)
-    endkw = take_kw(ps, ENDDATA)
-    nl2 = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
+    @trynext dot2 = take(ps, DOT)
+    @trynext endkw = take_kw(ps, ENDDATA)
+    @trynext nl2 = accept_newline(ps)
     return EXPR(DataStatement(dot, kw, blockname, row_names, values, nl, dot2, endkw, nl2))
 end
 
 function parse_options(ps, dot)
-    kw = take_kw(ps, OPTIONS)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trysetup OptionStatement dot
+    @trynext kw = take_kw(ps, OPTIONS)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(OptionStatement(dot, kw, params, nl))
 end
 
 function parse_width(ps, dot)
-    kw = take_kw(ps, WIDTH)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trysetup WidthStatement dot
+    @trynext kw = take_kw(ps, WIDTH)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(WidthStatement(dot, kw, params, nl))
 end
 
 function parse_node(ps)
+    @trysetup NodeName
     if kind(nt(ps)) == NUMBER
-        return EXPR(NodeName(take_literal(ps)))
+        return EXPR(NodeName(@trynext take_literal(ps)))
     elseif is_ident(kind(nt(ps)))
-        return EXPR(NodeName(take_identifier(ps)))
+        return EXPR(NodeName(@trynext take_identifier(ps)))
     else
-        error!(ps, UnexpectedToken, "circuit node")
+        return error!(ps, UnexpectedToken, "circuit node")
     end
 end
 
@@ -315,8 +338,9 @@ function parse_node_list(ps)
 end
 
 function parse_node_list!(nodes, ps)
+    @trysetup NodeName
     while !eol(ps)
-        p = parse_node(ps)
+        @trynext p = parse_node(ps)
         push!(nodes, p)
     end
     return nodes
@@ -393,36 +417,40 @@ function parse_subckt(ps, dot)
 end
 
 function parse_dc(ps, dot)
-    kw = take_kw(ps, DC)
+    @trysetup DCStatement dot
+    @trynext kw = take_kw(ps, DC)
     commands = EXPRList{DCCommand}()
     while !eol(ps)
-        command = parse_dc_command(ps)
+        @trynext command = parse_dc_command(ps)
         push!(commands, command)
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(DCStatement(dot, kw, commands, nl))
 end
 
 function parse_dc_command(ps)
-    name = take_identifier(ps)
-    start = parse_expression(ps)
-    stop = parse_expression(ps)
-    step = parse_expression(ps)
+    @trysetup DCCommand
+    @trynext name = take_identifier(ps)
+    @trynext start = parse_expression(ps)
+    @trynext stop = parse_expression(ps)
+    @trynext step = parse_expression(ps)
     return EXPR(DCCommand(name, start, stop, step))
 end
 
 function parse_ac(ps, dot)
-    kw = take_kw(ps, AC)
-    command = parse_ac_command(ps)
-    nl = accept_newline(ps)
+    @trysetup ACStatement dot
+    @trynext kw = take_kw(ps, AC)
+    @trynext command = parse_ac_command(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(ACStatement(dot, kw, command, nl))
 end
 
 function parse_ac_command(ps)
-    name = take_identifier(ps) # Should be keyword (lin/dec/oct)?
-    n = parse_expression(ps)
-    fstart = parse_expression(ps)
-    fstop = parse_expression(ps)
+    @trysetup ACCommand
+    @trynext name = take_identifier(ps) # Should be keyword (lin/dec/oct)?
+    @trynext n = parse_expression(ps)
+    @trynext fstart = parse_expression(ps)
+    @trynext fstop = parse_expression(ps)
     return EXPR(ACCommand(name, n, fstart, fstop))
 end
 
@@ -437,12 +465,13 @@ function parse_endl(ps, dot)
 end
 
 function parse_lib(ps, dot)
-    kw = take_kw(ps, LIB)
+    @trysetup Any
+    @trynext kw = take_kw(ps, LIB)
     # library section is of the form .lib identifier
     # library include is of the form .lib [string|identifier] identifier
     if !is_ident(kind(nnt(ps)))
-        name = take_identifier(ps)
-        nl = accept_newline(ps)
+        @trynext name = take_identifier(ps)
+        @trynext nl = accept_newline(ps)
         stmt = nothing
         exprs = EXPRList{Any}()
         while true
@@ -456,29 +485,36 @@ function parse_lib(ps, dot)
         end
         return EXPR(LibStatement(dot, kw, name, nl, exprs, stmt))
     else
-        path = take_path(ps)
-        name = take_identifier(ps)
-        nl = accept_newline(ps)
+        @trynext path = take_path(ps)
+        @trynext name = take_identifier(ps)
+        @trynext nl = accept_newline(ps)
         return EXPR(LibInclude(dot, kw, path, name, nl))
     end
 end
 
 function parse_condition(ps)
-    lparen = accept(ps, LPAREN)
-    expr = parse_expression(ps)
-    rparen = accept(ps, RPAREN)
+    @trysetup Condition
+    @trynext lparen = accept(ps, LPAREN)
+    @trynext expr = parse_expression(ps)
+    @trynext rparen = accept(ps, RPAREN)
     return EXPR(Condition(lparen, expr, rparen))
 end
 
-function parse_ifelse_block(ps, dot, kw)
+function parse_ifelse_block(ps, dot, kws=(IF, ELSE, ELSEIF))
+    # real capture of dot and kw happens here
+    @trysetup IfElseCase dot
+    @trynext kw = take_kw(ps, kws)
     condition = nothing
     if kw.form.kw in (IF, ELSEIF)
-        condition = parse_condition(ps)
+        @trynext condition = parse_condition(ps)
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     stmts = EXPRList{Any}()
     while true
         if kind(nt(ps)) == DOT && kind(nnt(ps)) in (ELSE, ELSEIF, ENDIF)
+            break
+        end
+        if kind(nt(ps)) == ENDMARKER
             break
         end
         stmt = parse_spice_toplevel(ps)
@@ -488,16 +524,21 @@ function parse_ifelse_block(ps, dot, kw)
 end
 
 function parse_if(ps, dot)
-    kw = take_kw(ps, IF)
+    @trysetup IfBlock # dot is captured in parse_ifelse_block
     cases = EXPRList{IfElseCase}()
+    push!(cases, @trynext parse_ifelse_block(ps, dot, (IF,)))
+    kw = nothing
     while true
-        push!(cases, parse_ifelse_block(ps, dot, kw))
         dot = take(ps, DOT)
         tok = kind(nt(ps))
-        kw = take_kw(ps, (IF, ELSE, ELSEIF, ENDIF))
-        tok === ENDIF && break
+        if tok === ENDIF
+            @trynext dot
+            @trynext kw = take_kw(ps, ENDIF)
+            break
+        end
+        push!(cases, @trynext parse_ifelse_block(ps, dot))
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(IfBlock(cases, dot, kw, nl))
 end
 
@@ -511,8 +552,9 @@ end
 
 
 function parse_unary_op(ps)
-    op = take_operator(ps)
-    primary = parse_primary(ps)
+    @trysetup UnaryOp
+    @trynext op = take_operator(ps)
+    @trynext primary = parse_primary(ps)
     return EXPR(UnaryOp(op, primary))
 end
 
@@ -666,8 +708,10 @@ function parse_parameter_list(ps)
 end
 
 function parse_parameter_list!(parameters, ps)
+    @trysetup Parameter
     while !eol(ps) && kind(nt(ps)) != RPAREN
-        p = parse_parameter(ps)
+        name = take_identifier(ps)
+        @trynext p = parse_parameter(ps, name)
         push!(parameters, p)
     end
     return parameters
@@ -687,16 +731,17 @@ function parse_parameter_mod(ps)
     return EXPR(DevMod(kw, slash, distr, eq, val))
 end
 
-function parse_parameter(ps, name = take_identifier(ps))
+function parse_parameter(ps, name)
+    @trysetup Parameter name
     eq = nothing
     val = nothing
     mod = nothing
     if kind(nt(ps)) == EQ # flags like savecurrents
-        eq = accept(ps, EQ)
-        val = parse_expression(ps)
+        @trynext eq = accept(ps, EQ)
+        @trynext val = parse_expression(ps)
     end
     if kind(nt(ps)) == DEV
-        mod = parse_parameter_mod(ps)
+        @trynext mod = parse_parameter_mod(ps)
     end
     return EXPR(Parameter(name, eq, val, mod))
 end
@@ -788,17 +833,18 @@ function parse_instance(ps)
         IDENTIFIER_UNKNOWN_INSTANCE           => unimplemented_instance_error(ps)
         # TODO: .lib path/section, escaping backslash, unknown (non-keyword) identifier
         IDENTIFIER                            => unimplemented_instance_error(ps)
-        _ => @assert false # all identifier kinds covered above
+        _ => error!(ps, UnexpectedToken, "instance identifier")
     end
 end
 
 function parse_julia_device(ps, name, nodes...)
-    ns = EXPRList{NodeName}()
+    @trysetup JuliaDevice
+    ns = EXPRList{HierarchialNode}()
     for n in nodes
         push!(ns, n)
     end
-    dev = parse_primary(ps)
-    nl = accept_newline(ps)
+    @trynext dev = parse_primary(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(JuliaDevice(name, ns, dev, nl))
 end
 
@@ -825,40 +871,40 @@ function parse_controlled(cs::Type{ControlledSource{in, out}}, ps) where {in, ou
     if kind(nt(ps)) == POLY
         # Parse POLY expression: POLY(N) control_nodes... coefficients...
         # Note: parentheses are treated as token separators and not emitted as tokens
-        poly_token = take_kw(ps, POLY)
-        n_dims_token = take_literal(ps)  # Should be a number literal
+        @trynext poly_token = take_kw(ps, POLY)
+        @trynext n_dims_token = take_literal(ps)  # Should be a number literal
 
         # Parse all remaining arguments into one big list
         # This includes: control_nodes + coefficients
         args = EXPRList{Any}()
         while !eol(ps)
-            push!(args, parse_expression(ps))
+            push!(args, @trynext parse_expression(ps))
         end
 
         # Create a special POLY expression structure
         poly_expr = EXPR(PolyControl(poly_token, n_dims_token, args))
 
-        nl = accept_newline(ps)
+        @trynext nl = accept_newline(ps)
         return EXPR(cs(name, pos, neg, poly_expr, nl))
     elseif kind(nt(ps)) == TABLE
         # Table controlled source parsing
-        table_token = take_kw(ps, TABLE)
-        expr = parse_expression(ps)
+        @trynext table_token = take_kw(ps, TABLE)
+        @trynext expr = parse_expression(ps)
         eq = if kind(nt(ps)) == EQ
                  accept(ps, EQ)
         end
         # Parse all remaining number pairs into one big list
         args = EXPRList{Any}()
         while !eol(ps)
-            push!(args, parse_expression(ps))
+            push!(args, @trynext parse_expression(ps))
         end
         table_expr = EXPR(TableControl(table_token, expr, eq, args))
-        nl = accept_newline(ps)
+        @trynext nl = accept_newline(ps)
         return EXPR(cs(name, pos, neg, table_expr, nl))
     elseif in == :V
         # Standard voltage controlled source parsing
-        cpos = kind(nnt(ps)) == EQ ? nothing : @trynext parse_node(ps)
-        cneg = kind(nnt(ps)) == EQ ? nothing : @trynext parse_node(ps)
+        cpos = kind(nnt(ps)) == EQ ? nothing : @trynext parse_hierarchial_node(ps)
+        cneg = kind(nnt(ps)) == EQ ? nothing : @trynext parse_hierarchial_node(ps)
         val = kind(nnt(ps)) == EQ ? nothing : @trynext parse_expression(ps)
         @trynext params = parse_parameter_list(ps)
         expr = EXPR(VoltageControl(cpos, cneg, val, params))
@@ -866,11 +912,11 @@ function parse_controlled(cs::Type{ControlledSource{in, out}}, ps) where {in, ou
         return EXPR(cs(name, pos, neg, expr, nl))
     elseif in == :C
         # Standard current controlled source parsing
-        vnam = kind(nnt(ps)) == EQ ? nothing : parse_node(ps)
-        val = kind(nnt(ps)) == EQ ? nothing : parse_expression(ps)
-        params = parse_parameter_list(ps)
+        vnam = kind(nnt(ps)) == EQ ? nothing : @trynext parse_hierarchial_node(ps)
+        val = kind(nnt(ps)) == EQ ? nothing : @trynext parse_expression(ps)
+        @trynext params = parse_parameter_list(ps)
         expr = EXPR(CurrentControl(vnam, val, params))
-        nl = accept_newline(ps)
+        @trynext nl = accept_newline(ps)
         return EXPR(cs(name, pos, neg, expr, nl))
     end
 end
@@ -937,31 +983,29 @@ end
 
 
 function parse_bipolar_transistor(ps)
-    name = parse_hierarchial_node(ps)
-    c = parse_hierarchial_node(ps)
-    b = parse_hierarchial_node(ps)
-    e = parse_hierarchial_node(ps)
+    @trysetup BipolarTransistor
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext c = parse_hierarchial_node(ps)
+    @trynext b = parse_hierarchial_node(ps)
+    @trynext e = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, c, b, e)
-    s = parse_hierarchial_node(ps) # or model
+    @trynext s = parse_hierarchial_node(ps) # or model
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, c, b, e, s)
     if is_ident(kind(nt(ps)))
         if kind(nnt(ps)) == EQ
-            param_name = take_identifier(ps)
             model = s
             s = nothing
-            params = EXPRList{Parameter}()
-            push!(params, parse_parameter(ps, param_name))
-            parse_parameter_list!(params, ps)
+            @trynext params = parse_parameter_list(ps)
         else
-            model = parse_hierarchial_node(ps)
-            params = parse_parameter_list(ps)
+            @trynext model = parse_hierarchial_node(ps)
+            @trynext params = parse_parameter_list(ps)
         end
     else
         model = s
         s = nothing
         params = EXPRList{Parameter}()
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(BipolarTransistor(name, c, b, e, s, model, params, nl))
 end
 
@@ -1066,13 +1110,15 @@ end
 function take_kw(ps, tkind)
     !isa(tkind, Tuple) && (tkind = (tkind,))
     kwkind = kind(nt(ps))
-    @assert is_kw(kwkind) && kwkind in tkind
+    if !is_kw(kwkind) || !(kwkind in tkind)
+        return error!(ps, UnexpectedToken, tkind)
+    end
     EXPR!(Keyword(kwkind), ps)
 end
 
 function take_identifier(ps)
     if !(is_ident(kind(nt(ps))))
-        error!(ps, UnexpectedToken)
+        return error!(ps, UnexpectedToken)
     end
     return EXPR!(Identifier(), ps)
 end
@@ -1084,13 +1130,15 @@ function take_identifier_or_number(ps)
     elseif kind(nt(ps)) == NUMBER
         return EXPR!(NumberLiteral(), ps)
     else
-        error!(ps, UnexpectedToken)
+        return error!(ps, UnexpectedToken)
     end
 end
 
 function take_literal(ps)
     ntkind = kind(nt(ps))
-    @assert is_literal(ntkind)
+    if !is_literal(ntkind)
+        return error!(ps, UnexpectedToken)
+    end
     EXPR!(ntkind == NUMBER ? NumberLiteral() :
           Literal(), ps)
 end
@@ -1112,7 +1160,7 @@ function accept(ps, tkind)
     if kind(nt(ps)) in tkind
         return EXPR!(Notation(), ps)
     else
-        return error!(ps, UnexpectedToken)
+        return error!(ps, UnexpectedToken, tkind)
     end
 end
 
@@ -1126,7 +1174,9 @@ end
 
 function accept_kw(ps, tkind)
     !isa(tkind, Tuple) && (tkind = (tkind,))
-    @assert all(is_kw, tkind)
+    if !all(is_kw, tkind)
+        return error!(ps, UnexpectedToken)
+    end
     kwkind = kind(nt(ps))
     if kwkind in tkind
         return EXPR!(Keyword(kwkind), ps)
@@ -1145,40 +1195,54 @@ function accept_kw(ps)
 end
 
 function take_string(ps)
-    @assert kind(nt(ps)) == STRING "Expected STRING but found $(kind(nt(ps)))"
+    if kind(nt(ps)) != STRING
+        return error!(ps, UnexpectedToken, "STRING")
+    end
     return EXPR!(StringLiteral(), ps)
 end
 
 function take_path(ps)
     # an unquoted path might be lexed as an identifier
-    @assert is_ident(kind(nt(ps))) || kind(nt(ps)) == STRING "Expected STRING or IDENTIFIER but found $(kind(nt(ps)))"
+    if !is_ident(kind(nt(ps))) && kind(nt(ps)) != STRING
+        return error!(ps, UnexpectedToken, "STRING or IDENTIFIER")
+    end
     return EXPR!(StringLiteral(), ps)
 end
 
 function take(ps, tkind)
     !isa(tkind, Tuple) && (tkind = (tkind,))
-    @assert kind(nt(ps)) in tkind
+    if !(kind(nt(ps)) in tkind)
+        return error!(ps, UnexpectedToken)
+    end
     return EXPR!(Notation(), ps)
 end
 
 function take_operator(ps)
     ntkind = kind(nt(ps))
-    @assert is_operator(ntkind)
+    if !is_operator(ntkind)
+        return error!(ps, UnexpectedToken)
+    end
     return EXPR!(Operator(ntkind), ps)
 end
 
 function take_builtin_func(ps)
-    @assert is_builtin_func(kind(nt(ps)))
+    if !is_builtin_func(kind(nt(ps)))
+        return error!(ps, UnexpectedToken)
+    end
     return EXPR!(BuiltinFunc(), ps)
 end
 
 function take_builtin_const(ps)
-    @assert is_builtin_const(kind(nt(ps)))
+    if !is_builtin_const(kind(nt(ps)))
+        return error!(ps, UnexpectedToken)
+    end
     return EXPR!(BuiltinConst(), ps)
 end
 
 function take_julia_escape_body(ps)
-    @assert kind(nt(ps)) == JULIA_ESCAPE
+    if kind(nt(ps)) != JULIA_ESCAPE
+        return error!(ps, UnexpectedToken)
+    end
     return EXPR!(JuliaEscapeBody(), ps)
 end
 

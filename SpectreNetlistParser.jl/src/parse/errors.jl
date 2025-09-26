@@ -3,6 +3,15 @@ using AbstractTrees
 const SC = SpectreNetlistCSTParser
 const SP = SPICENetlistParser.SPICENetlistCSTParser
 
+function Base.LineNumberNode(n::SC.Node)
+    sf = n.ps.srcfile
+    lsf = sf.lineinfo
+    lno_first = LineNumbers.compute_line(lsf, n.startof+n.expr.off)
+    # line 1 is at offset 0
+    offset = n.ps.srcline - 1
+    LineNumberNode(lno_first+offset, Symbol(sf.path))
+end
+
 function visit_errors(sa; io=stdout, verbose=false)
     print("\n")
     for node in PreOrderDFS(sa)

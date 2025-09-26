@@ -368,7 +368,7 @@ function parse_nodes(ps)
     @trysetup SNode
     nodes = EXPRList{SNode}()
     while kind(nt(ps)) != RPAREN && !eol(ps)
-        id = @trynext parse_node(ps)
+        @trynext id = parse_node(ps)
         push!(nodes, id)
     end
     return nodes
@@ -594,14 +594,18 @@ end
 
 function take_kw(ps)
     kwkind = kind(nt(ps))
-    @assert is_kw(kwkind)
+    if !is_kw(kwkind)
+        return error!(ps, UnexpectedToken)
+    end
     EXPR!(Keyword(kwkind), ps)
 end
 
 function take_kw(ps, tkind)
     !isa(tkind, Tuple) && (tkind = (tkind,))
     kwkind = kind(nt(ps))
-    @assert is_kw(kwkind) && kwkind in tkind
+    if !is_kw(kwkind) || !(kwkind in tkind)
+        return error!(ps, UnexpectedToken)
+    end
     EXPR!(Keyword(kwkind), ps)
 end
 
@@ -616,7 +620,9 @@ end
 
 function take_literal(ps)
     ntkind = kind(nt(ps))
-    @assert is_literal(ntkind)
+    if !is_literal(ntkind)
+        return error!(ps, UnexpectedToken)
+    end
     EXPR!(ntkind == NUMBER ? NumberLiteral() :
           Literal(), ps)
 end
@@ -650,7 +656,9 @@ end
 
 function accept_kw(ps, tkind)
     !isa(tkind, Tuple) && (tkind = (tkind,))
-    @assert all(is_kw, tkind)
+    if !all(is_kw, tkind)
+        return error!(ps, UnexpectedToken)
+    end
     kwkind = kind(nt(ps))
     if kwkind in tkind
         return EXPR!(Keyword(kwkind), ps)
@@ -669,29 +677,39 @@ function accept_kw(ps)
 end
 
 function take_string(ps)
-    @assert kind(nt(ps)) == STRING
+    if kind(nt(ps)) != STRING
+        return error!(ps, UnexpectedToken)
+    end
     return EXPR!(StringLiteral(), ps)
 end
 
 function take(ps, tkind)
     !isa(tkind, Tuple) && (tkind = (tkind,))
-    @assert kind(nt(ps)) in tkind
+    if !(kind(nt(ps)) in tkind)
+        return error!(ps, UnexpectedToken)
+    end
     return EXPR!(Notation(), ps)
 end
 
 function take_operator(ps)
     ntkind = kind(nt(ps))
-    @assert is_operator(ntkind)
+    if !is_operator(ntkind)
+        return error!(ps, UnexpectedToken)
+    end
     return EXPR!(Operator(ntkind), ps)
 end
 
 function take_builtin_func(ps)
-    @assert is_builtin_func(kind(nt(ps)))
+    if !is_builtin_func(kind(nt(ps)))
+        return error!(ps, UnexpectedToken)
+    end
     return EXPR!(BuiltinFunc(), ps)
 end
 
 function take_builtin_const(ps)
-    @assert is_builtin_const(kind(nt(ps)))
+    if !is_builtin_const(kind(nt(ps)))
+        return error!(ps, UnexpectedToken)
+    end
     return EXPR!(BuiltinConst(), ps)
 end
 

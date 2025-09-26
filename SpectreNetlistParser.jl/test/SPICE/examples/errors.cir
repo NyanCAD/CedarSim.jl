@@ -3,3 +3,23 @@ r1 a
 c1 b
 l1 a
 x1 c
+.FOO
+* test parse_node errors - invalid node names
+r2 ( 0 1k
+* test expression parsing errors - invalid expressions
+v1 vcc 0 DC +
+* test unknown instance prefixes
+z1 a b model_name
+* test invalid DOT commands
+.INVALID_COMMAND
+* test missing newlines and malformed statements
+v2 incomplete
+* test measure function errors - incomplete measure statements
+.measure tran
+* test measure point with errors
+.measure tran vmax find
+* test measure range with errors
+.measure tran power avg
+.if (1)
+r8 a
+.if
