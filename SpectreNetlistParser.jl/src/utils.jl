@@ -245,6 +245,18 @@ macro trynext(assignment)
     end)
 end
 
+macro donext(assignment)
+    if !(assignment isa Expr) || assignment.head !== :(=)
+        assignment = Expr(:(=), gensym(), assignment)
+    end
+    lhs = assignment.args[1]
+    esc(quote
+        $assignment
+        push!($exprlistname, $lhs)
+        $lhs
+    end)
+end
+
 function mkcond(cond)
     if isexpr(cond, :call) && cond.args[1] == :(|)
         return Expr(:(||),

@@ -112,6 +112,9 @@ function extract_definitions_from_file(filepath::String; lib_section=nothing, de
     # Read file with specified encoding
     content = read(filepath, String, encoding)
     ast = SpectreNetlistParser.parse(IOBuffer(content); fname=filepath, implicit_title=false)
+    if ast.ps.errored
+        SpectreNetlistParser.visit_errors(ast)
+    end
 
     config = ExtractionConfig(
         includepaths=[dirname(abspath(filepath))],
@@ -141,6 +144,9 @@ function extract_definitions_from_file(filepath::String; lib_section=nothing, de
             files_processed = files_processed
         )
     catch e
+        showerror(stderr, e)
+        println(stderr)
+        # throw(e)
         error_type = string(typeof(e))
         error_stats[error_type] = get(error_stats, error_type, 0) + 1
         push!(failed_files, filepath)
@@ -252,7 +258,7 @@ function extract_definitions(ast, config::ExtractionConfig, models::Vector{Any},
             if config.device_blacklist !== nothing && occursin(config.device_blacklist, String(name))
                 continue
             end
-            ports = [LSymbol(node.name) for node in stmt.subckt_nodes]
+            ports = [LSymbol(node) for node in stmt.subckt_nodes]
             # Start with parameters from subckt line
             params = [LSymbol(p.name) for p in stmt.parameters]
             # Add parameters from .param statements inside subcircuit
@@ -348,85 +354,97 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
     
     # Convert models (SPICE .model statements)
     for (name, typ, subtype, code) in models
-        # Create deterministic ID based on name, type, and category path
-        category_str = isempty(base_category) ? "" : join(base_category, "_")
-        model_id = "models:$(category_str)_$(typ)_$(name)"
-        
-        # Map SPICE device types directly to Mosaic types, using subtype for polarity
-        mosaic_type = device_type_mapping(typ, subtype)
-        
-        # Generate template code based on mode
-        template_code = generate_template_code(code, mode, archive_url, source_file)
-        
-        model_def = Dict{String, Any}(
-            "_id" => model_id,
-            "name" => string(name),
-            "type" => mosaic_type,
-            "category" => base_category,  # Put models in Models subcategory
-            # SPICE models define device templates, not schematic circuits  
-            "templates" => Dict(
-                "spice" => [Dict(
-                    "name" => "default",
-                    "code" => template_code,
-                    "use-x" => false
-                )],
-                "spectre" => Vector{Dict{String,Any}}(),
-                "verilog" => Vector{Dict{String,Any}}(),
-                "vhdl" => Vector{Dict{String,Any}}()
-            ),
-            # TODO: Extract parameter info from model statement
-            "props" => Vector{Dict{String,Any}}()
-        )
-        
-        # Add source file info if available
-        if source_file !== nothing
-            model_def["category"] = vcat(base_category, [basename(source_file)])
+        try
+            # Create deterministic ID based on name, type, and category path
+            category_str = isempty(base_category) ? "" : join(base_category, "_")
+            model_id = "models:$(category_str)_$(typ)_$(name)"
+            
+            # Map SPICE device types directly to Mosaic types, using subtype for polarity
+            mosaic_type = device_type_mapping(typ, subtype)
+            
+            # Generate template code based on mode
+            template_code = generate_template_code(code, mode, archive_url, source_file)
+            
+            model_def = Dict{String, Any}(
+                "_id" => model_id,
+                "name" => string(name),
+                "type" => mosaic_type,
+                "category" => base_category,  # Put models in Models subcategory
+                # SPICE models define device templates, not schematic circuits  
+                "templates" => Dict(
+                    "spice" => [Dict(
+                        "name" => "default",
+                        "code" => template_code,
+                        "use-x" => false
+                    )],
+                    "spectre" => Vector{Dict{String,Any}}(),
+                    "verilog" => Vector{Dict{String,Any}}(),
+                    "vhdl" => Vector{Dict{String,Any}}()
+                ),
+                # TODO: Extract parameter info from model statement
+                "props" => Vector{Dict{String,Any}}()
+            )
+            
+            # Add source file info if available
+            if source_file !== nothing
+                model_def["category"] = vcat(base_category, [basename(source_file)])
+            end
+            
+            push!(result, model_def)
+        catch e
+            showerror(stderr, e)
+            println(stderr)
+            continue
         end
-        
-        push!(result, model_def)
     end
     
     # Convert subcircuits  
     for (name, ports, parameters, code) in subcircuits
-        # Use file-level override if specified, otherwise detect from name
-        device_type = file_device_type !== nothing ? file_device_type : detect_device_type_from_name(name)
-        
-        # Create deterministic ID based on name, detected type, and category path
-        category_str = isempty(base_category) ? "" : join(base_category, "_")
-        model_id = "models:$(category_str)_$(device_type)_$(name)"
-        
-        # Determine port layout using heuristics based on port names
-        port_layout = determine_port_layout(ports)
-        
-        # Generate template code based on mode
-        template_code = generate_template_code(code, mode, archive_url, source_file)
-        
-        model_def = Dict{String, Any}(
-            "_id" => model_id,
-            "name" => string(name),
-            "type" => device_type,
-            "category" => base_category,
-            "ports" => port_layout,
-            "templates" => Dict(
-                "spice" => [Dict(
-                    "name" => "default", 
-                    "code" => template_code,
-                    "use-x" => true  # subcircuits always use X prefix
-                )],
-                "spectre" => Vector{Dict{String,Any}}(),
-                "verilog" => Vector{Dict{String,Any}}(),
-                "vhdl" => Vector{Dict{String,Any}}()
-            ),
-            # Convert parameter names to props format
-            "props" => [Dict("name" => string(param), "tooltip" => "") for param in parameters]
-        )
-        
-        # Add source file info if available  
-        if source_file !== nothing
-            model_def["category"] = vcat(base_category, [basename(source_file)])
+        try
+            # Use file-level override if specified, otherwise detect from name
+            device_type = file_device_type !== nothing ? file_device_type : detect_device_type_from_name(name)
+            
+            # Create deterministic ID based on name, detected type, and category path
+            category_str = isempty(base_category) ? "" : join(base_category, "_")
+            model_id = "models:$(category_str)_$(device_type)_$(name)"
+            
+            # Determine port layout using heuristics based on port names
+            port_layout = determine_port_layout(ports)
+            
+            # Generate template code based on mode
+            template_code = generate_template_code(code, mode, archive_url, source_file)
+            
+            model_def = Dict{String, Any}(
+                "_id" => model_id,
+                "name" => string(name),
+                "type" => device_type,
+                "category" => base_category,
+                "ports" => port_layout,
+                "templates" => Dict(
+                    "spice" => [Dict(
+                        "name" => "default", 
+                        "code" => template_code,
+                        "use-x" => true  # subcircuits always use X prefix
+                    )],
+                    "spectre" => Vector{Dict{String,Any}}(),
+                    "verilog" => Vector{Dict{String,Any}}(),
+                    "vhdl" => Vector{Dict{String,Any}}()
+                ),
+                # Convert parameter names to props format
+                "props" => [Dict("name" => string(param), "tooltip" => "") for param in parameters]
+            )
+            
+            # Add source file info if available  
+            if source_file !== nothing
+                model_def["category"] = vcat(base_category, [basename(source_file)])
+            end
+            
+            push!(result, model_def)
+        catch e
+            showerror(stderr, e)
+            println(stderr)
+            continue
         end
-        
-        push!(result, model_def)
     end
     
     return result
