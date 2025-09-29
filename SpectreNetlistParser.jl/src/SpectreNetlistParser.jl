@@ -32,7 +32,7 @@ include("SPICE/SPICENetlistParser.jl")
 include("tokenize/SpectreNetlistTokenize.jl")
 include("parse/SpectreNetlistCSTParser.jl")
 
-using .SpectreNetlistCSTParser: parse, parsefile
+using .SpectreNetlistCSTParser: parse, parsefile, visit_errors
 
 using SnoopPrecompile
 @precompile_all_calls begin

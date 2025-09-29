@@ -2,7 +2,7 @@
 # - Move endl inline
 # - Nodes can be integers
 
-import ...@case, ....@trynext, ....@trysetup
+import ...@case, ....@trynext, ....@trysetup, ....@donext
 
 function parse_spice_toplevel(ps)::EXPR
     @case kind(nt(ps)) begin
@@ -403,7 +403,7 @@ function parse_subckt(ps, dot)
     end
     @trynext nl = accept_newline(ps)
     exprs = EXPRList{Any}()
-    while true
+    while kind(nt(ps)) != ENDMARKER
         if kind(nt(ps)) == DOT
             dot2 = take(ps, DOT)  # Don't capture yet - will be captured in appropriate branch
             if kind(nt(ps)) == ENDS
@@ -413,14 +413,14 @@ function parse_subckt(ps, dot)
                 @trynext nl2 = accept_newline(ps)
                 return EXPR(Subckt(dot, kw, name, nodes, parameters, nl, exprs, dot2, ends, name_end, nl2))
             else
-                @trynext expr = parse_dot(ps, dot2)  # parse_dot will capture dot2
+                @donext expr = parse_dot(ps, dot2)  # parse_dot will capture dot2
             end
         else
-            @trynext expr = parse_spice_toplevel(ps)
+            @donext expr = parse_spice_toplevel(ps)
         end
         push!(exprs, expr)
     end
-    error("unreachable")
+    @trynext error!(ps, UnexpectedToken, ENDS)
 end
 
 function parse_dc(ps, dot)
