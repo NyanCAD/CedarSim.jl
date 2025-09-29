@@ -33,114 +33,124 @@ function parse_spectrenetlist_source(ps)::EXPR
 end
 
 function parse_conditional_block(ps)
-    aif = parse_if(ps)
+    @trysetup ConditionalBlock
+    @trynext aif = parse_if(ps)
     cases = EXPRList{ElseIf}()
     aelse = nothing
     while kind(nt(ps)) == ELSE
         kw = take_kw(ps, ELSE)
         if kind(nt(ps)) == IF
-            stmt = parse_elseif(ps, kw)
+            @trynext stmt = parse_elseif(ps, kw)
             push!(cases, stmt)
         else
-            aelse = parse_else(ps, kw)
+            @trynext aelse = parse_else(ps, kw)
             break
         end
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(ConditionalBlock(aif, cases, aelse, nl))
 end
 
 function parse_if(ps)
-    kw = take_kw(ps, IF)
-    lparen = accept(ps, LPAREN)
-    expr = parse_expression(ps)
-    rparen = accept(ps, RPAREN)
-    lbrace = accept(ps, LBRACE)
-    nl = accept_newline(ps)
-    name = take_identifier(ps)
-    stmt = parse_instance(ps,name)
-    rbrace = accept(ps, RBRACE)
+    @trysetup If
+    @trynext kw = take_kw(ps, IF)
+    @trynext lparen = accept(ps, LPAREN)
+    @trynext expr = parse_expression(ps)
+    @trynext rparen = accept(ps, RPAREN)
+    @trynext lbrace = accept(ps, LBRACE)
+    @trynext nl = accept_newline(ps)
+    @trynext name = take_identifier(ps)
+    @trynext stmt = parse_instance(ps,name)
+    @trynext rbrace = accept(ps, RBRACE)
     return EXPR(If(kw, lparen, expr, rparen, lbrace, nl, stmt, rbrace))
 end
 
 function parse_elseif(ps, kw)
-    kw2 = take_kw(ps, IF)
-    lparen = accept(ps, LPAREN)
-    expr = parse_expression(ps)
-    rparen = accept(ps, RPAREN)
-    lbrace = accept(ps, LBRACE)
-    nl = accept_newline(ps)
-    name = take_identifier(ps)
-    stmt = parse_instance(ps,name)
-    rbrace = accept(ps, RBRACE)
+    @trysetup ElseIf kw
+    @trynext kw2 = take_kw(ps, IF)
+    @trynext lparen = accept(ps, LPAREN)
+    @trynext expr = parse_expression(ps)
+    @trynext rparen = accept(ps, RPAREN)
+    @trynext lbrace = accept(ps, LBRACE)
+    @trynext nl = accept_newline(ps)
+    @trynext name = take_identifier(ps)
+    @trynext stmt = parse_instance(ps,name)
+    @trynext rbrace = accept(ps, RBRACE)
     return EXPR(ElseIf(kw, kw2, lparen, expr, rparen, lbrace, nl, stmt, rbrace))
 end
 
 function parse_else(ps, kw)
-    lbrace = accept(ps, LBRACE)
-    nl = accept_newline(ps)
-    name = take_identifier(ps)
-    stmt = parse_instance(ps,name)
-    rbrace = accept(ps, RBRACE)
+    @trysetup Else kw
+    @trynext lbrace = accept(ps, LBRACE)
+    @trynext nl = accept_newline(ps)
+    @trynext name = take_identifier(ps)
+    @trynext stmt = parse_instance(ps,name)
+    @trynext rbrace = accept(ps, RBRACE)
     return EXPR(Else(kw, lbrace, nl, stmt, rbrace))
 end
 
 
 
 function parse_function_decl_arg(ps)
-    typ = take_kw(ps, REAL)
-    id = take_identifier(ps)
+    @trysetup FunctionDeclArg
+    @trynext typ = take_kw(ps, REAL)
+    @trynext id = take_identifier(ps)
     return EXPR(FunctionDeclArg(typ, id))
 end
 
 function parse_function_decl(ps)
-    rtype = take_kw(ps, REAL)
-    id = take_identifier(ps)
-    lparen = take(ps, LPAREN)
+    @trysetup FunctionDecl
+    @trynext rtype = take_kw(ps, REAL)
+    @trynext id = take_identifier(ps)
+    @trynext lparen = take(ps, LPAREN)
     args = EXPRList{FunctionArgs{EXPR{FunctionDeclArg}}}()
     if kind(nt(ps)) != RPAREN
-        parse_comma_list!(parse_function_decl_arg, ps, args)
+        @trynext args = parse_comma_list(typeof(args), parse_function_decl_arg, ps)
     end
-    rparen = take(ps, RPAREN)
-    lbrace = take(ps, LBRACE)
-    nl1 = take(ps, NEWLINE)
-    ret = take_kw(ps, RETURN)
-    exp = parse_expression(ps)
-    semicolon = take(ps, SEMICOLON)
-    nl2 = take(ps, NEWLINE)
-    rbrace = take(ps, RBRACE)
-    nl3 = take(ps, NEWLINE)
+    @trynext rparen = take(ps, RPAREN)
+    @trynext lbrace = take(ps, LBRACE)
+    @trynext nl1 = take(ps, NEWLINE)
+    @trynext ret = take_kw(ps, RETURN)
+    @trynext exp = parse_expression(ps)
+    @trynext semicolon = take(ps, SEMICOLON)
+    @trynext nl2 = take(ps, NEWLINE)
+    @trynext rbrace = take(ps, RBRACE)
+    @trynext nl3 = take(ps, NEWLINE)
     return EXPR(FunctionDecl(rtype, id, lparen, args, rparen, lbrace, nl1, ret, exp, semicolon, nl2, rbrace, nl3))
 end
 
 function parse_subckt(ps, inline=nothing)
-    kw = accept_kw(ps, SUBCKT)
-    name = accept_identifier(ps)
+    @trysetup Subckt
+    if inline !== nothing
+        @trynext inline
+    end
+    @trynext kw = accept_kw(ps, SUBCKT)
+    @trynext name = accept_identifier(ps)
     subckt_nodes = if kind(nt(ps)) == LPAREN
-        lparen = accept(ps, LPAREN)
-        nodes = parse_nodes(ps)
-        rparen = accept(ps, RPAREN)
+        @trynext lparen = accept(ps, LPAREN)
+        @trynext nodes = parse_nodes(ps)
+        @trynext rparen = accept(ps, RPAREN)
         EXPR(SubcktNodes(lparen, nodes, rparen))
     else
-        nodes = parse_nodes(ps)
+        @trynext nodes = parse_nodes(ps)
         if isempty(nodes)
             nothing
         else
             EXPR(SubcktNodes(nothing, nodes, nothing))
         end
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     exprs = EXPRList{Any}()
     while kind(nt(ps)) != ENDS
-        expr = parse_spectrenetlist_source(ps)
+        @trynext expr = parse_spectrenetlist_source(ps)
         push!(exprs, expr)
     end
-    ends = accept_kw(ps, ENDS)
+    @trynext ends = accept_kw(ps, ENDS)
     end_name = nothing
     if kind(nt(ps)) == IDENTIFIER
-        end_name = take_identifier(ps)
+        @trynext end_name = take_identifier(ps)
     end
-    nl2 = accept_newline(ps)
+    @trynext nl2 = accept_newline(ps)
     return EXPR(Subckt(inline, kw, name, subckt_nodes, nl, exprs, ends, end_name, nl2))
 end
 
@@ -405,38 +415,45 @@ end
 function parse_expression(ps)
     ex = parse_primary_or_unary(ps)
     if is_operator(kind(nt(ps)))
-        op = take_operator(ps)
-        ex = parse_binop(ps, ex, op)
+        @trysetup BinaryExpression ex
+        @trynext op = take_operator(ps)
+        @trynext ex = parse_binop(ps, ex, op)
     elseif kind(nt(ps)) == CONDITIONAL
-        not = take(ps, CONDITIONAL)
-        ifcase = parse_expression(ps)
-        colon = accept(ps, COLON)
-        elsecase = parse_expression(ps)
+        # Local trysetup for compound ternary expression
+        @trysetup TernaryExpr ex
+        @trynext not = take(ps, CONDITIONAL)
+        @trynext ifcase = parse_expression(ps)
+        @trynext colon = accept(ps, COLON)
+        @trynext elsecase = parse_expression(ps)
         ex = EXPR(TernaryExpr(ex, not, ifcase, colon, elsecase))
     end
     return ex
 end
 
 
-function parse_comma_list!(parse_item, ps, list)
+function parse_comma_list(T, parse_item, ps)
+    ElementType = T.parameters[1]
+    @trysetup ElementType
+    list = T()
     comma = nothing
     while true
-        ref = parse_item(ps)
-        push!(list, EXPR((typeof(list).parameters[1])(comma, ref)))
-        kind(nt(ps)) == COMMA || return
-        comma = take(ps, COMMA)
+        @trynext ref = parse_item(ps)
+        push!(list, EXPR(ElementType(comma, ref)))
+        kind(nt(ps)) == COMMA || break
+        @trynext comma = take(ps, COMMA)
     end
-    nothing
+    return list
 end
 
 
 function parse_function_call(ps, name)
-    lparen = accept(ps, LPAREN)
+    @trysetup FunctionCall name
+    @trynext lparen = accept(ps, LPAREN)
     args = EXPRList{FunctionArgs{EXPR}}()
     if kind(nt(ps)) != RPAREN
-        parse_comma_list!(parse_expression, ps, args)
+        @trynext args = parse_comma_list(typeof(args), parse_expression, ps)
     end
-    return EXPR(FunctionCall(name, lparen, args, accept(ps, RPAREN)))
+    return EXPR(FunctionCall(name, lparen, args, @trynext accept(ps, RPAREN)))
 end
 
 function parse_primary_or_unary(ps)
@@ -448,28 +465,32 @@ function parse_primary_or_unary(ps)
 end
 
 function parse_unary_op(ps)
-    op = take_operator(ps)
-    primary = parse_primary(ps)
+    # Local trysetup for compound unary operation
+    @trysetup UnaryOp
+    @trynext op = take_operator(ps)
+    @trynext primary = parse_primary(ps)
     return EXPR(UnaryOp(op, primary))
 end
 
 
+# see spice version for comments
 function parse_binop(ps, ex, op, opterm = nothing)
+    @trysetup BinaryExpression
     local rhs
     while true
-        rhs = parse_primary_or_unary(ps)
+        @trynext rhs = parse_primary_or_unary(ps)
         is_operator(kind(nt(ps))) || break
         ntprec = prec(kind(nt(ps)))
         if prec(op) >= ntprec
             ex = EXPR(BinaryExpression(ex, op, rhs))
             (opterm !== nothing && prec(opterm) >= ntprec) && return ex
-            op = take_operator(ps)
+            @trynext op = take_operator(ps)
             continue
         else
-            rhs = parse_binop(ps, rhs, take_operator(ps), op)
+            @trynext rhs = parse_binop(ps, rhs, @trynext(take_operator(ps)), op)
             ex = EXPR(BinaryExpression(ex, op, rhs))
             is_operator(kind(nt(ps))) || return ex
-            op = take_operator(ps)
+            @trynext op = take_operator(ps)
             continue
         end
     end
@@ -512,33 +533,36 @@ function parse_primary(ps)
 end
 
 function parse_paren(ps)
-    lparen = take(ps, LPAREN)
-    e = parse_expression(ps)
-    rparen = accept(ps, RPAREN)
+    # Local trysetup for compound Parens expression
+    @trysetup Parens
+    @trynext lparen = take(ps, LPAREN)
+    @trynext e = parse_expression(ps)
+    @trynext rparen = accept(ps, RPAREN)
     return EXPR(Parens(lparen, e, rparen))
 end
 
 
 function parse_array(ps)
-    lbrace = take(ps, LSQUARE)
+    @trysetup SpectreArray
+    @trynext lbrace = take(ps, LSQUARE)
     items = EXPRList{Any}()
     while kind(nt(ps)) !== RSQUARE
         # > When expressions are used within vectors, anything other than constants, parameters,
         # or unary expressions (unary +, unary -) must be surrounded by parentheses
         if kind(nt(ps)) == LPAREN
-            v = parse_paren(ps)
+            v = @trynext parse_paren(ps)
         elseif is_unary_operator(kind(nt(ps)))
-            v = parse_unary_op(ps)
+            v = @trynext parse_unary_op(ps)
         elseif is_ident(kind(nt(ps)))
-            v = take_identifier(ps)
+            v = @trynext take_identifier(ps)
         elseif is_literal(kind(nt(ps)))
-            v = take_literal(ps)
+            v = @trynext take_literal(ps)
         else
-            return error!(ps, UnexpectedToken)
+            return @trynext error!(ps, UnexpectedToken)
         end
         push!(items, v)
     end
-    rbrace = take(ps, RSQUARE)
+    @trynext rbrace = take(ps, RSQUARE)
     return EXPR(SpectreArray(lbrace, items, rbrace))
 end
 
@@ -570,25 +594,27 @@ end
 
 
 function parse_simulator(ps)
-    kw = take_kw(ps, SIMULATOR)
-    langkw = take_kw(ps, LANG)
-    eq = take(ps, EQ)
+    @trysetup Simulator
+    @trynext kw = take_kw(ps, SIMULATOR)
+    @trynext langkw = take_kw(ps, LANG)
+    @trynext eq = take(ps, EQ)
     if kind(nt(ps)) == SPICE
         ps.lang_swapped=true
     end
-    lang = take_kw(ps, (SPECTRE, SPICE))
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trynext lang = take_kw(ps, (SPECTRE, SPICE))
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Simulator(kw, langkw, eq, lang, params, nl))
 end
 
 
 function parse_model(ps)
-    kw = take_kw(ps, MODEL)
-    name = take_identifier(ps)
-    master = take_identifier(ps)
-    parameters = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trysetup Model
+    @trynext kw = take_kw(ps, MODEL)
+    @trynext name = take_identifier(ps)
+    @trynext master = take_identifier(ps)
+    @trynext parameters = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Model(kw, name, master, parameters, nl))
 end
 

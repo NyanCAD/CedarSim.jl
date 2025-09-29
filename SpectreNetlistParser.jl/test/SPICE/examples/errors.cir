@@ -20,6 +20,10 @@ v2 incomplete
 .measure tran vmax find
 * test measure range with errors
 .measure tran power avg
+* expressions
+r5 a b '1+2*'
+r5 a b '1*2+'
+* conditionals
 .if (1)
 r8 a
 .if

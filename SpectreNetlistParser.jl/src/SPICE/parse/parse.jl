@@ -75,27 +75,28 @@ function parse_title(ps)
 end
 
 function parse_tran(ps, dot)
-    kw = take_kw(ps, TRAN)
-    tstep_or_stop = take_literal(ps)
+    @trysetup Tran dot
+    @trynext kw = take_kw(ps, TRAN)
+    @trynext tstep_or_stop = take_literal(ps)
     tstop = if is_literal(kind(nt(ps)))
         tstep = tstep_or_stop
-        take_literal(ps)
+        @trynext take_literal(ps)
     else
         tstep = nothing
         tstep_or_stop
     end
     tstart = if is_literal(kind(nt(ps)))
-        take_literal(ps)
+        @trynext take_literal(ps)
     end
     tmax = if is_literal(kind(nt(ps)))
-        take_literal(ps)
+        @trynext take_literal(ps)
     end
     uic = if is_ident(kind(nt(ps)))
-        take_identifier(ps)
+        @trynext take_identifier(ps)
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     if tstep === nothing && ps.lexer.strict && (ps.lexer.spice_dialect in (:ngspice, :hspice))
-        return error!(ps, StrictModeViolation)
+        return @trynext error!(ps, StrictModeViolation)
     end
     return EXPR(Tran(dot, kw, tstep, tstop, tstart, tmax, uic, nl))
 end
@@ -166,12 +167,13 @@ function parse_measure_range(ps, dot, kw, type, name)
 end
 
 function parse_risefallcross(ps)
-    rfc_kw = take_kw(ps, (RISE, FALL, CROSS))
-    eq_rfc = take(ps, EQ)
+    @trysetup RiseFallCross
+    @trynext rfc_kw = take_kw(ps, (RISE, FALL, CROSS))
+    @trynext eq_rfc = take(ps, EQ)
     val = if kind(nt(ps)) == LAST
-        take_kw(ps)
+        @trynext take_kw(ps)
     else
-        take_literal(ps)
+        @trynext take_literal(ps)
     end
     return EXPR(RiseFallCross(rfc_kw, eq_rfc, val))
 end
@@ -269,12 +271,13 @@ function parse_ic(ps, dot)
 end
 
 function parse_print(ps, dot)
-    kw = take_kw(ps, PRINT)
+    @trysetup PrintStatement dot
+    @trynext kw = take_kw(ps, PRINT)
     entries = EXPRList{Any}()
     while !eol(ps)
-        push!(entries, parse_expression(ps))
+        push!(entries, @trynext parse_expression(ps))
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(PrintStatement(dot, kw, entries, nl))
 end
 
@@ -367,49 +370,53 @@ function parse_hierarchial_node_list(ps)
 end
 
 function parse_hierarchial_node_list!(nodes, ps)
+    @trysetup HierarchialNode
     while !eol(ps)
-        p = parse_hierarchial_node(ps)
+        @trynext p = parse_hierarchial_node(ps)
         push!(nodes, p)
     end
     return nodes
 end
 
 function parse_model(ps, dot)
-    kw = take_kw(ps, MODEL)
-    name = parse_hierarchial_node(ps)
-    typ = take_identifier_or_number(ps)  # Model types can start with digits
-    parameters = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trysetup Model dot
+    @trynext kw = take_kw(ps, MODEL)
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext typ = take_identifier_or_number(ps)  # Model types can start with digits
+    @trynext parameters = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Model(dot, kw, name, typ, parameters, nl))
 end
 
 function parse_subckt(ps, dot)
-    kw = take_kw(ps, SUBCKT)
-    name = take_identifier_or_number(ps)
+    @trysetup Subckt dot
+    @trynext kw = take_kw(ps, SUBCKT)
+    @trynext name = take_identifier_or_number(ps)
     nodes = EXPRList{HierarchialNode}()
     parameters = EXPRList{Parameter}()
     while !eol(ps)
         if kind(nnt(ps)) == EQ
-            parse_parameter_list!(parameters, ps)
+            @trynext parameters = parse_parameter_list(ps)
         else
-            push!(nodes, parse_hierarchial_node(ps))
+            push!(nodes, @trynext parse_hierarchial_node(ps))
         end
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     exprs = EXPRList{Any}()
     while true
         if kind(nt(ps)) == DOT
-            dot2 = take(ps, DOT)
+            dot2 = take(ps, DOT)  # Don't capture yet - will be captured in appropriate branch
             if kind(nt(ps)) == ENDS
-                ends = take_kw(ps, ENDS)
-                name_end = eol(ps) ? nothing : take_identifier_or_number(ps)
-                nl2 = accept_newline(ps)
+                @trynext dot2     # Capture it now since we're using it in return
+                @trynext ends = take_kw(ps, ENDS)
+                name_end = eol(ps) ? nothing : @trynext take_identifier_or_number(ps)
+                @trynext nl2 = accept_newline(ps)
                 return EXPR(Subckt(dot, kw, name, nodes, parameters, nl, exprs, dot2, ends, name_end, nl2))
             else
-                expr = parse_dot(ps, dot2)
+                @trynext expr = parse_dot(ps, dot2)  # parse_dot will capture dot2
             end
         else
-            expr = parse_spice_toplevel(ps)
+            @trynext expr = parse_spice_toplevel(ps)
         end
         push!(exprs, expr)
     end
@@ -455,12 +462,13 @@ function parse_ac_command(ps)
 end
 
 function parse_endl(ps, dot)
-    endd = take_kw(ps, ENDL)
+    @trysetup EndlStatement dot
+    @trynext endd = take_kw(ps, ENDL)
     endl_id = nothing
     if is_ident(kind(nt(ps)))
-        endl_id = take_identifier(ps)
+        @trynext endl_id = take_identifier(ps)
     end
-    nl = accept_newline(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(EndlStatement(dot, endd, endl_id, nl))
 end
 
@@ -570,7 +578,10 @@ function parse_primary(ps)
         if kind(nt(ps)) == LPAREN
             return parse_function_call(ps, id)
         elseif kind(nt(ps)) == DOT
-            return parse_hierarchial_node(ps, EXPR(NodeName(id)))
+            # Local trysetup for compound hierarchical node - id captured here since
+            # parse_hierarchial_node doesn't capture pre-parsed arguments
+            @trysetup HierarchialNode id
+            return @trynext parse_hierarchial_node(ps, EXPR(NodeName(id)))
         else
             return id
         end
@@ -581,19 +592,25 @@ function parse_primary(ps)
     elseif is_kw(kind(nt(ps)))
         return take_kw(ps)
     elseif kind(nt(ps)) == LBRACE
-        lparen = take(ps, LBRACE)
-        e = parse_expression(ps)
-        rparen = accept(ps, RBRACE)
+        # Local trysetup for compound Brace expression
+        @trysetup Brace
+        @trynext lparen = take(ps, LBRACE)
+        @trynext e = parse_expression(ps)
+        @trynext rparen = accept(ps, RBRACE)
         return EXPR(Brace(lparen, e, rparen))
     elseif kind(nt(ps)) == LPAREN
-        lparen = take(ps, LPAREN)
-        e = parse_expression(ps)
-        rparen = accept(ps, RPAREN)
+        # Local trysetup for compound Parens expression
+        @trysetup Parens
+        @trynext lparen = take(ps, LPAREN)
+        @trynext e = parse_expression(ps)
+        @trynext rparen = accept(ps, RPAREN)
         return EXPR(Parens(lparen, e, rparen))
     elseif kind(nt(ps)) == PRIME
-        lparen = take(ps, PRIME)
-        e = parse_expression(ps)
-        rparen = accept(ps, PRIME)
+        # Local trysetup for compound Prime expression
+        @trysetup Prime
+        @trynext lparen = take(ps, PRIME)
+        @trynext e = parse_expression(ps)
+        @trynext rparen = accept(ps, PRIME)
         return EXPR(Prime(lparen, e, rparen))
     elseif kind(nt(ps)) == JULIA_ESCAPE_BEGIN
         # Switch to julia parser
@@ -613,74 +630,92 @@ function parse_primary(ps)
     return error!(ps, UnexpectedToken, "expression")
 end
 
-function parse_comma_list!(parse_item, ps, list)
+function parse_comma_list(T, parse_item, ps)
+    ElementType = T.parameters[1]
+    @trysetup ElementType
+    list = T()
     comma = nothing
     while true
-        ref = parse_item(ps)
-        push!(list, EXPR((typeof(list).parameters[1])(comma, ref)))
-        kind(nt(ps)) == COMMA || return
-        comma = take(ps, COMMA)
+        @trynext ref = parse_item(ps)
+        push!(list, EXPR(ElementType(comma, ref)))
+        kind(nt(ps)) == COMMA || break
+        @trynext comma = take(ps, COMMA)
     end
-    nothing
+    return list
 end
 
 function parse_function_call(ps, name)
-    lparen = accept(ps, LPAREN)
+    @trysetup FunctionCall name
+    @trynext lparen = accept(ps, LPAREN)
     args = EXPRList{FunctionArgs{EXPR}}()
     if kind(nt(ps)) != RPAREN
-        parse_comma_list!(parse_expression, ps, args)
+        @trynext args = parse_comma_list(typeof(args), parse_expression, ps)
     end
-    return EXPR(FunctionCall(name, lparen, args, accept(ps, RPAREN)))
+    return EXPR(FunctionCall(name, lparen, args, @trynext accept(ps, RPAREN)))
 end
 
 function parse_array(ps)
-    lsquare = accept(ps, LSQUARE)
+    @trysetup Square
+    @trynext lsquare = accept(ps, LSQUARE)
     args = EXPRList{Any}()
     while kind(nt(ps)) != RSQUARE
-        push!(args, parse_expression(ps))
+        push!(args, @trynext parse_expression(ps))
     end
-    rsquare = accept(ps, RSQUARE)
+    @trynext rsquare = accept(ps, RSQUARE)
     return EXPR(Square(lsquare, args, rsquare))
 end
 
 function parse_expression(ps)
     if kind(nt(ps)) == PRIME
-        lprime = take(ps, PRIME)
-        expr = parse_expression(ps)
-        rprime = take(ps, PRIME)
+        # Local trysetup for compound Prime expression
+        @trysetup Prime
+        @trynext lprime = take(ps, PRIME)
+        @trynext expr = parse_expression(ps)
+        @trynext rprime = take(ps, PRIME)
         return EXPR(Prime(lprime, expr, rprime))
     end
     ex = parse_primary_or_unary(ps)
     if is_operator(kind(nt(ps)))
-        op = take_operator(ps)
-        ex = parse_binop(ps, ex, op)
+        # caller captures
+        @trysetup BinaryExpression ex
+        @trynext op = take_operator(ps)
+        @trynext ex = parse_binop(ps, ex, op)
     end
     if kind(nt(ps)) == CONDITIONAL
-        not = take(ps, CONDITIONAL)
-        ifcase = parse_expression(ps)
-        colon = accept(ps, COLON)
-        elsecase = parse_expression(ps)
+        # Local trysetup for compound ternary expression
+        @trysetup TernaryExpr ex
+        @trynext not = take(ps, CONDITIONAL)
+        @trynext ifcase = parse_expression(ps)
+        @trynext colon = accept(ps, COLON)
+        @trynext elsecase = parse_expression(ps)
         ex = EXPR(TernaryExpr(ex, not, ifcase, colon, elsecase))
     end
     return ex
 end
 
+# this is a tricky one. Caller captures!!
 function parse_binop(ps, ex, op, opterm = nothing)
+    @trysetup BinaryExpression
     local rhs
     while true
-        rhs = parse_primary_or_unary(ps)
+        @trynext rhs = parse_primary_or_unary(ps)
         is_operator(kind(nt(ps))) || break
         ntprec = prec(kind(nt(ps)))
         if prec(op) >= ntprec
+            # caller captured ex and op, we can captured rhs
             ex = EXPR(BinaryExpression(ex, op, rhs))
             (opterm !== nothing && prec(opterm) >= ntprec) && return ex
-            op = take_operator(ps)
+            @trynext op = take_operator(ps)
             continue
         else
-            rhs = parse_binop(ps, rhs, take_operator(ps), op)
+            # we're the caller now, so we can capture ex, op and opterm
+            @trynext rhs = parse_binop(ps, rhs, @trynext(take_operator(ps)), op)
+            # ex is made up of captured elements
+            # op is captured
+            # rhs is captured, but if Error, does not contain ex and op
             ex = EXPR(BinaryExpression(ex, op, rhs))
             is_operator(kind(nt(ps))) || return ex
-            op = take_operator(ps)
+            @trynext op = take_operator(ps)
             continue
         end
     end
@@ -689,15 +724,16 @@ function parse_binop(ps, ex, op, opterm = nothing)
 end
 
 function parse_simulator(ps)
-    kw = take_kw(ps, SIMULATOR)
-    langkw = take_kw(ps, LANG)
-    eq = take(ps, EQ)
+    @trysetup Simulator
+    @trynext kw = take_kw(ps, SIMULATOR)
+    @trynext langkw = take_kw(ps, LANG)
+    @trynext eq = take(ps, EQ)
     if kind(nt(ps)) == SPECTRE
         ps.lang_swapped=true
     end
-    lang = take_kw(ps, (SPECTRE, SPICE))
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trynext lang = take_kw(ps, (SPECTRE, SPICE))
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Simulator(kw, langkw, eq, lang, params, nl))
 end
 
@@ -719,15 +755,16 @@ end
 
 
 function parse_parameter_mod(ps)
+    @trysetup DevMod
     # TODO: Lot
-    kw = take_kw(ps, DEV)
+    @trynext kw = take_kw(ps, DEV)
     slash, distr = nothing, nothing
     if kind(nt(ps)) == SLASH
-        slash = take(ps, SLASH)
-        distr = take_identifier(ps)
+        @trynext slash = take(ps, SLASH)
+        @trynext distr = take_identifier(ps)
     end
-    eq = take(ps, EQ)
-    val = parse_expression(ps)
+    @trynext eq = take(ps, EQ)
+    @trynext val = parse_expression(ps)
     return EXPR(DevMod(kw, slash, distr, eq, val))
 end
 
@@ -748,52 +785,59 @@ end
 
 
 function parse_param(ps, dot)
-    kw = take_kw(ps)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trysetup ParamStatement dot
+    @trynext kw = take_kw(ps)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(ParamStatement(dot, kw, params, nl))
 end
 
 function parse_temp(ps, dot)
-    kw = take_kw(ps)
-    val = parse_expression(ps)
-    nl = accept_newline(ps)
+    @trysetup TempStatement dot
+    @trynext kw = take_kw(ps)
+    @trynext val = parse_expression(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(TempStatement(dot, kw, val, nl))
 end
 
 function parse_global(ps, dot)
-    kw = take_kw(ps, GLOBAL)
-    nodes = parse_hierarchial_node_list(ps)
-    nl = accept_newline(ps)
+    @trysetup GlobalStatement dot
+    @trynext kw = take_kw(ps, GLOBAL)
+    @trynext nodes = parse_hierarchial_node_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(GlobalStatement(dot, kw, nodes, nl))
 end
 
 function parse_csparam(ps, dot)
-    kw = take_kw(ps)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trysetup ParamStatement dot
+    @trynext kw = take_kw(ps)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(ParamStatement(dot, kw, params, nl))
 end
 
 
 function parse_include(ps, dot)
-    kw = take_kw(ps, INCLUDE)
-    path = take_path(ps)
-    nl = accept_newline(ps)
+    @trysetup IncludeStatement dot
+    @trynext kw = take_kw(ps, INCLUDE)
+    @trynext path = take_path(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(IncludeStatement(dot, kw, path, nl))
 end
 
 function parse_hdl(ps, dot)
-    kw = take_kw(ps, HDL)
-    path = take_path(ps)
-    nl = accept_newline(ps)
+    @trysetup HDLStatement dot
+    @trynext kw = take_kw(ps, HDL)
+    @trynext path = take_path(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(HDLStatement(dot, kw, path, nl))
 end
 
 
 function parse_end(ps, dot)
-    endd = take_kw(ps, END)
-    nl = accept_newline(ps)
+    @trysetup EndStatement dot
+    @trynext endd = take_kw(ps, END)
+    @trynext nl = accept_newline(ps)
     return EXPR(EndStatement(dot, endd, nl))
 end
 
@@ -922,12 +966,13 @@ function parse_controlled(cs::Type{ControlledSource{in, out}}, ps) where {in, ou
 end
 
 function parse_behavioral(ps)
-    name = parse_hierarchial_node(ps)
-    pos = parse_hierarchial_node(ps)
-    neg = parse_hierarchial_node(ps)
+    @trysetup Behavioral
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext pos = parse_hierarchial_node(ps)
+    @trynext neg = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Behavioral(name, pos, neg, params, nl))
 end
 
@@ -935,11 +980,12 @@ parse_voltage(ps) = parse_voltage_or_current(ps, true)
 parse_current(ps) = parse_voltage_or_current(ps, false)
 
 function parse_tran_fn(ps)
-    kw = take_kw(ps)
+    @trysetup TranSource
+    @trynext kw = take_kw(ps)
     # TODO: Check divisible by two?
     vals = EXPRList{Any}()
     while !eol(ps) && !is_kw(kind(nt(ps)))
-        ref = parse_expression(ps)
+        @trynext ref = parse_expression(ps)
         push!(vals, ref)
     end
     return EXPR(TranSource(kw, vals))
@@ -1023,14 +1069,15 @@ end
 
 
 function parse_diode(ps)
-    name = parse_hierarchial_node(ps)
-    pos = parse_hierarchial_node(ps)
-    neg = parse_hierarchial_node(ps)
+    @trysetup Diode
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext pos = parse_hierarchial_node(ps)
+    @trynext neg = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, pos, neg)
 
-    model = parse_hierarchial_node(ps)
-    params = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trynext model = parse_hierarchial_node(ps)
+    @trynext params = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(Diode(name, pos, neg, model, params, nl))
 end
 
@@ -1048,15 +1095,16 @@ end
 
 
 function parse_mosfet(ps)
-    name = parse_hierarchial_node(ps)
-    d = parse_hierarchial_node(ps)
-    g = parse_hierarchial_node(ps)
-    s = parse_hierarchial_node(ps)
-    b = parse_hierarchial_node(ps)
+    @trysetup MOSFET
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext d = parse_hierarchial_node(ps)
+    @trynext g = parse_hierarchial_node(ps)
+    @trynext s = parse_hierarchial_node(ps)
+    @trynext b = parse_hierarchial_node(ps)
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, d, g, s, b)
-    model = parse_hierarchial_node(ps)
-    parameters = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trynext model = parse_hierarchial_node(ps)
+    @trynext parameters = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(MOSFET(name, d, g, s, b, model, parameters, nl))
 end
 
@@ -1075,12 +1123,13 @@ function parse_subckt_call(ps)
 end
 
 function parse_s_parameter_element(ps)
-    name = parse_hierarchial_node(ps)
-    nd1 = parse_hierarchial_node(ps)
-    nd2 = parse_hierarchial_node(ps)
-    model = parse_hierarchial_node(ps)
-    parameters = parse_parameter_list(ps)
-    nl = accept_newline(ps)
+    @trysetup SParameterElement
+    @trynext name = parse_hierarchial_node(ps)
+    @trynext nd1 = parse_hierarchial_node(ps)
+    @trynext nd2 = parse_hierarchial_node(ps)
+    @trynext model = parse_hierarchial_node(ps)
+    @trynext parameters = parse_parameter_list(ps)
+    @trynext nl = accept_newline(ps)
     return EXPR(SParameterElement(name, nd1, nd2, model, parameters, nl))
 end
 
