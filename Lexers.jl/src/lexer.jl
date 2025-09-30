@@ -233,6 +233,8 @@ Returns a `Token` of kind `kind` with contents `str` and starts a new `Token`.
 function emit(l::Lexer{IO_t}, kind) where IO_t
     tok = Token(kind,
                   startpos(l), position(l) - 1)
+    # println("EMIT ", kind, " ", String(l.io.data[1 .+ (tok.startbyte:tok.endbyte)]))
+    # println(l.lexing_expression_stack)
     l.last_token = kind
     if !is_triv(kind)
         l.lexed_nontriv_token_line = true

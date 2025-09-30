@@ -1116,6 +1116,9 @@ function parse_subckt_call(ps)
         push!(nodes, @trynext parse_hierarchial_node(ps))
     end
     kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, nodes...)
+    if isempty(nodes)
+        return @trynext error!(ps, UnexpectedToken, HierarchialNode)
+    end
     model = pop!(nodes)
     @trynext parameters = parse_parameter_list(ps)
     @trynext nl = accept_newline(ps)

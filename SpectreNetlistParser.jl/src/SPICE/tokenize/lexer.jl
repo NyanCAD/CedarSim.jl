@@ -143,7 +143,16 @@ function next_token(l::Lexer{IO, K}) where {IO, K}
     end
 end
 
+# using ....LineNumbers
 function lex_rbrace(l::Lexer)
+    # if !lastis(l.lexing_expression_stack, LBRACE)
+    #     buf = l.io.data
+    #     sf = LineNumbers.SourceFile(buf)
+    #     line = LineNumbers.compute_line(sf, position(l))
+    #     str = String(sf[line])
+    #     println(line, ": ", str)
+    #     println(l.lexing_expression_stack)
+    # end
     @assert lastis(l.lexing_expression_stack, LBRACE)
     pop!(l.lexing_expression_stack)
     if lastis(l.lexing_expression_stack, EQ)
@@ -302,7 +311,11 @@ function lex_equal(l::Lexer)
             emit(l, EQEQ)
         end
     else
-        push!(l.lexing_expression_stack, EQ)
+        # = is the start of an implicit expression
+        # unless we're already in an expression
+        if isempty(l.lexing_expression_stack)
+            push!(l.lexing_expression_stack, EQ)
+        end
         emit(l, EQ)
     end
 end
