@@ -40,7 +40,7 @@ mutable struct Lexer{IO_t <: IO, K, F}
     enable_julia_escape::Bool
 end
 
-function Lexer(io::IO_t, init_kind::K, next_token; case_sensitive::Bool=true, enable_julia_escape::Bool=false) where {IO_t, K}
+function Lexer(io::IO_t, init_kind::K, next_token; case_sensitive::Bool=true, enable_julia_escape::Bool=false, spice_dialect::Symbol=:ngspice, strict::Bool=false) where {IO_t, K}
     c1 = ' '
     p1 = position(io)
     if eof(io)
@@ -58,11 +58,11 @@ function Lexer(io::IO_t, init_kind::K, next_token; case_sensitive::Bool=true, en
             p3 = position(io)
         end
     end
-    l = Lexer(io, position(io), next_token, case_sensitive, position(io), position(io), init_kind, init_kind, IOBuffer(), (c1,c2,c3), (p1,p2,p3), false, false, K[], :ngspice, false, enable_julia_escape)
+    l = Lexer(io, position(io), next_token, case_sensitive, position(io), position(io), init_kind, init_kind, IOBuffer(), (c1,c2,c3), (p1,p2,p3), false, false, K[], spice_dialect, strict, enable_julia_escape)
     start_token!(l)
     return l
 end
-Lexer(str::AbstractString, init_kind, next_token; case_sensitive=true, enable_julia_escape::Bool=false)  = Lexer(IOBuffer(str), init_kind, next_token; case_sensitive)
+Lexer(str::AbstractString, init_kind, next_token; case_sensitive=true, enable_julia_escape::Bool=false, spice_dialect::Symbol=:ngspice, strict::Bool=false)  = Lexer(IOBuffer(str), init_kind, next_token; case_sensitive, enable_julia_escape, spice_dialect, strict)
 
 """
     tokenize(x, T = Token)
@@ -71,7 +71,7 @@ Returns an `Iterable` containing the tokenized input. Can be reverted by e.g.
 `join(untokenize.(tokenize(x)))`. Setting `T` chooses the type of token
 produced by the lexer (`Token` or `Token`).
 """
-tokenize(x, init_kind, next_token; case_sensitive=true, enable_julia_escape::Bool=false) = Lexer(x, init_kind, next_token; case_sensitive, enable_julia_escape)
+tokenize(x, init_kind, next_token; case_sensitive=true, enable_julia_escape::Bool=false, spice_dialect::Symbol=:ngspice, strict::Bool=false) = Lexer(x, init_kind, next_token; case_sensitive, enable_julia_escape, spice_dialect, strict)
 
 function untokenize(t::Token, l::Lexer{IOBuffer})
     String(l.io.data[1 .+ (t.startbyte:t.endbyte)])

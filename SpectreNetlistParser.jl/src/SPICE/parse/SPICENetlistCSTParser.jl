@@ -24,8 +24,8 @@ function parse(str::AbstractString; offset=0, kwargs...)
 end
 parsefile(fname::AbstractString; kwargs...) = parse(String(open(read, fname)); fname, kwargs...)
 
-function parse(io::IOBuffer; fname=nothing, srcline=1, return_on_language_change::Bool=false, implicit_title::Bool=true)
-    return parse(ParseState(io; fname, srcline, return_on_language_change, implicit_title))
+function parse(io::IOBuffer; fname=nothing, srcline=1, return_on_language_change::Bool=false, implicit_title::Bool=true, spice_dialect::Symbol=:ngspice, strict::Bool=false)
+    return parse(ParseState(io; fname, srcline, return_on_language_change, implicit_title, spice_dialect, strict))
 end
 
 function parse(ps::ParseState)

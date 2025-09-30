@@ -54,7 +54,8 @@ function main()
                 "osram.lib" => "diode", # infrared LEDs
                 "ntc.lib" => "resistor" # thermistors (temperature-dependent resistors)
             ),
-            encoding=enc"ISO-8859-1"  # MicroCap files contain degree symbols in Latin-1 encoding
+            encoding=enc"ISO-8859-1",  # MicroCap files contain degree symbols in Latin-1 encoding
+            spice_dialect=:pspice,  # MicroCap syntax is closest to PSpice
         ),
 
         ArchiveConfig(

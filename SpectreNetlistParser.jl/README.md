@@ -13,3 +13,5 @@ https://cseweb.ucsd.edu/classes/wi10/cse241a/assign/hspice_sa.pdf Chapter 4
 https://github.com/google/skywater-pdk-libs-sky130_fd_pr/blob/main/models/sky130.lib.spice
 
 http://bwrcs.eecs.berkeley.edu/Classes/IcBook/SPICE/UserGuide/elements_fr.html
+
+https://www.seas.upenn.edu/~jan/spice/PSpice_ReferenceguideOrCAD.pdf

@@ -21,20 +21,20 @@ mutable struct ParseState{L <: Lexer}
     return_on_language_change::Bool
 end
 
-function ParseState(io::IOBuffer; fname::Union{AbstractString, Nothing} = nothing, srcline=1, return_on_language_change::Bool, enable_julia_escape::Bool=false, implicit_title::Bool=true)
+function ParseState(io::IOBuffer; fname::Union{AbstractString, Nothing} = nothing, srcline=1, return_on_language_change::Bool, enable_julia_escape::Bool=false, implicit_title::Bool=true, spice_dialect::Symbol=:ngspice, strict::Bool=false)
     p = position(io)
     sstr = read(io, String)
     seek(io, p)
     sourcefile = SourceFile(sstr)
     srcfile = SrcFile(fname, io, sourcefile)
-    return ParseState(srcfile; srcline, return_on_language_change, enable_julia_escape, implicit_title)
+    return ParseState(srcfile; srcline, return_on_language_change, enable_julia_escape, implicit_title, spice_dialect, strict)
 end
 
 
-function ParseState(srcfile::SrcFile; srcline=1, return_on_language_change::Bool, enable_julia_escape::Bool=false, implicit_title::Bool=true)
+function ParseState(srcfile::SrcFile; srcline=1, return_on_language_change::Bool, enable_julia_escape::Bool=false, implicit_title::Bool=true, spice_dialect::Symbol=:ngspice, strict::Bool=false)
     p = position(srcfile.contents)
     uz = UInt32(0)
-    l = Lexer(srcfile.contents, ERROR, next_token; case_sensitive=false, enable_julia_escape)
+    l = Lexer(srcfile.contents, ERROR, next_token; case_sensitive=false, enable_julia_escape, spice_dialect, strict)
     if implicit_title
         # First line of any SPICE file has an implicit .TITLE
         l.last_nontriv_token = TITLE

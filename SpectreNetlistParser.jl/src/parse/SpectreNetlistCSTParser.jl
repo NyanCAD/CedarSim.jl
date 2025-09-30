@@ -24,7 +24,7 @@ function parse(str::AbstractString; offset=0, kwargs...)
 end
 parsefile(fname::AbstractString; kwargs...) = parse(String(open(read, fname)); fname, kwargs...)
 
-function parse(io::IOBuffer; fname=nothing, srcline=1, start_lang=nothing, enable_julia_escape::Bool=false, implicit_title::Bool=true)
+function parse(io::IOBuffer; fname=nothing, srcline=1, start_lang=nothing, enable_julia_escape::Bool=false, implicit_title::Bool=true, spice_dialect::Symbol=:ngspice, strict::Bool=false)
     if start_lang === nothing
         start_lang = if fname === nothing
             :spectre
@@ -39,7 +39,7 @@ function parse(io::IOBuffer; fname=nothing, srcline=1, start_lang=nothing, enabl
     end
 
     ps = ParseState(io; fname, srcline)
-    parse(ps; start_lang, enable_julia_escape, implicit_title)
+    parse(ps; start_lang, enable_julia_escape, implicit_title, spice_dialect, strict)
 end
 
 function transition_from_spice!(ps::ParseState, ps_spice)
@@ -49,12 +49,12 @@ function transition_from_spice!(ps::ParseState, ps_spice)
     reinit_at_pos!(ps, p)
 end
 
-function parse(ps::ParseState; start_lang, enable_julia_escape::Bool=false, implicit_title::Bool=false)
+function parse(ps::ParseState; start_lang, enable_julia_escape::Bool=false, implicit_title::Bool=false, spice_dialect::Symbol=:ngspice, strict::Bool=false)
     stmts = EXPRList{Any}()
 
     if start_lang == :spice
         seek(ps.srcfile.contents, 0)
-        ps_spice = SPICENetlistParser.SPICENetlistCSTParser.ParseState(ps.srcfile; return_on_language_change=true, enable_julia_escape, implicit_title)
+        ps_spice = SPICENetlistParser.SPICENetlistCSTParser.ParseState(ps.srcfile; return_on_language_change=true, enable_julia_escape, implicit_title, spice_dialect, strict)
         tree_spice = SPICENetlistParser.SPICENetlistCSTParser.parse(ps_spice)
         push!(stmts, tree_spice.expr)
         transition_from_spice!(ps, ps_spice)
@@ -65,7 +65,7 @@ function parse(ps::ParseState; start_lang, enable_julia_escape::Bool=false, impl
         if ps.lang_swapped
             offset = nt(ps).startbyte
             seek(ps.srcfile.contents, offset)
-            ps_spice = SPICENetlistParser.SPICENetlistCSTParser.ParseState(ps.srcfile; return_on_language_change=true)
+            ps_spice = SPICENetlistParser.SPICENetlistCSTParser.ParseState(ps.srcfile; return_on_language_change=true, spice_dialect=spice_dialect, strict=strict)
             tree_spice = SPICENetlistParser.SPICENetlistCSTParser.parse(ps_spice)
             push!(stmts, tree_spice.expr)
             transition_from_spice!(ps, ps_spice)

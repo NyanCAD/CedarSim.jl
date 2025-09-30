@@ -63,6 +63,8 @@ Fields:
 - device_blacklist: Regex pattern to skip device names (use alternation like r"__parasitic|__base"i)
 - file_device_types: Dict mapping filename -> device type for file-level overrides
 - encoding: File encoding (default: enc"UTF-8"). Use enc"ISO-8859-1" for older SPICE files with degree symbols
+- spice_dialect: SPICE dialect for lexer (:ngspice, :hspice, :pspice). Default: :ngspice
+- strict: Enforce dialect-specific parsing rules. Default: false
 """
 struct ArchiveConfig
     url::String
@@ -73,9 +75,11 @@ struct ArchiveConfig
     device_blacklist::Union{Regex, Nothing}
     file_device_types::Dict{String, String}
     encoding::Encoding
-    
-    function ArchiveConfig(url, entrypoints, base_category, mode; lib_section=nothing, device_blacklist=nothing, file_device_types=Dict{String, String}(), encoding=enc"UTF-8")
-        new(url, entrypoints, base_category, mode, lib_section, device_blacklist, file_device_types, encoding)
+    spice_dialect::Symbol
+    strict::Bool
+
+    function ArchiveConfig(url, entrypoints, base_category, mode; lib_section=nothing, device_blacklist=nothing, file_device_types=Dict{String, String}(), encoding=enc"UTF-8", spice_dialect=:ngspice, strict=false)
+        new(url, entrypoints, base_category, mode, lib_section, device_blacklist, file_device_types, encoding, spice_dialect, strict)
     end
 end
 
@@ -102,18 +106,21 @@ function generate_template_code(code, mode, archive_url, file_path)
 end
 
 """
-    extract_definitions_from_file(filepath::String; lib_section=nothing, device_blacklist=nothing, encoding=enc"UTF-8") -> (models, subcircuits)
+    extract_definitions_from_file(filepath::String; lib_section=nothing, device_blacklist=nothing, encoding=enc"UTF-8", spice_dialect=:ngspice, strict=false) -> (models, subcircuits)
 
 Parse a SPICE/Spectre file and extract model and subcircuit definitions.
 Uses automatic file extension detection (.scs = Spectre, others = SPICE).
 Handles .include and .lib statements by recursively parsing referenced files.
+
+The spice_dialect parameter controls SPICE lexer behavior (:ngspice, :hspice, :pspice).
+The strict parameter enforces dialect-specific rules when true.
 """
-function extract_definitions_from_file(filepath::String; lib_section=nothing, device_blacklist=nothing, encoding=enc"UTF-8")
+function extract_definitions_from_file(filepath::String; lib_section=nothing, device_blacklist=nothing, encoding=enc"UTF-8", spice_dialect=:ngspice, strict=false)
     # Read file with specified encoding
     content = read(filepath, String, encoding)
-    ast = SpectreNetlistParser.parse(IOBuffer(content); fname=filepath, implicit_title=false)
+    ast = SpectreNetlistParser.parse(IOBuffer(content); fname=filepath, implicit_title=false, spice_dialect, strict)
     if ast.ps.errored
-        SpectreNetlistParser.visit_errors(ast)
+        #SpectreNetlistParser.visit_errors(ast)
     end
 
     config = ExtractionConfig(
@@ -686,7 +693,7 @@ function process_archive(config::ArchiveConfig)
 
             try
                 # Extract definitions from file
-                extraction_result = extract_definitions_from_file(full_path; lib_section=config.lib_section, device_blacklist=config.device_blacklist, encoding=config.encoding)
+                extraction_result = extract_definitions_from_file(full_path; lib_section=config.lib_section, device_blacklist=config.device_blacklist, encoding=config.encoding, spice_dialect=config.spice_dialect, strict=config.strict)
 
                 # Merge error statistics
                 for (error_type, count) in extraction_result.error_stats

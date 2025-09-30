@@ -65,7 +65,7 @@ function next_token(l::Lexer{IO, K}) where {IO, K}
     elseif ((!isempty(l.lexing_expression_stack) && is_whitespace(c)) ||
            (isempty(l.lexing_expression_stack) && is_token_seperator(c)))
         return lex_whitespace(l)
-    elseif l.last_nontriv_token ∈ (INCLUDE, LIB, HDL)
+    elseif l.last_nontriv_token ∈ (INCLUDE, LIB, HDL) && isempty(l.lexing_expression_stack)
         return lex_path(l, c)
     elseif !l.lexed_nontriv_token_line && is_instance_first_char(c)
         return lex_instance(l, c)
@@ -120,6 +120,8 @@ function next_token(l::Lexer{IO, K}) where {IO, K}
         return lex_amper(l)
     elseif c == '|'
         return lex_bar(l)
+    elseif c == '\'' && l.spice_dialect === :pspice # pspice '0 '1 logic literals
+        return lex_number(l)
     elseif c == '\''
         return lex_prime(l)
     elseif c == '"'
@@ -396,6 +398,9 @@ function lex_number(l::Lexer)
         while ishex(peekchar(l))
             readchar(l)
         end
+    elseif pc == '\'' && is_logic_char(ppc)
+        readchar(l)  # consume '\''
+        readchar(l)  # consume logic char
     elseif pc == 'e' || pc == 'E'
         # Scientific notation (e.g., 1.5e-3, 2E+5)
         readchar(l)  # consume 'e' or 'E'
@@ -426,6 +431,7 @@ end
 is_signed_char(c) = c in ('s', 'S')
 is_hex_base_char(c) = c in ('h', 'H')
 is_base_char(c) = c in ('d', 'D', 'h', 'H', 'o', 'O', 'b', 'B')
+is_logic_char(c) = c in ('0', '1', 'x', 'X', 'z', 'Z')
 
 function lex_prime(l)
     if l.last_nontriv_token ∈ (LIB, INCLUDE)
