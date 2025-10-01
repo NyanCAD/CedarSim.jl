@@ -87,18 +87,20 @@ end
     generate_template_code(code, mode, archive_url, file_path)
 
 Generate template code for Mosaic format.
-- mode = :inline: returns the actual code  
+- mode = :inline: returns the actual code
 - mode = :include: returns .include statement
 - mode = :lib: returns .lib statement with {corner} section
+
+Paths are always quoted to handle spaces and special characters.
 """
 function generate_template_code(code, mode, archive_url, file_path)
     if mode == :inline
         return code
     elseif mode == :include
-        path = archive_url !== nothing ? "\"$(archive_url)#$(file_path)\"" : file_path
+        path = archive_url !== nothing ? "\"$(archive_url)#$(file_path)\"" : "\"$(file_path)\""
         return ".include $(path)"
     elseif mode == :lib
-        path = archive_url !== nothing ? "\"$(archive_url)#$(file_path)\"" : file_path
+        path = archive_url !== nothing ? "\"$(archive_url)#$(file_path)\"" : "\"$(file_path)\""
         return ".lib $(path) {corner}"
     else
         error("Invalid mode: $mode. Must be :inline, :include, or :lib")
@@ -643,19 +645,21 @@ function process_archive(config::ArchiveConfig)
         
         # Find files to process
         matching_files = Pair{String,String}[]  # full_path => relative_path
-        
+        is_archive = false
+
         # Use p7zip to extract
         p7zip_exe = p7zip_jll.p7zip_path
-        
+
         try
             println("Extracting archive...")
             run(`$p7zip_exe x $archive_file -o$extract_dir -y`)
-            
+            is_archive = true
+
             # Archive extraction succeeded - find files to process
             if config.entrypoints === nothing
                 # Auto-discover SPICE files by walking directory tree
                 spice_extensions = [".mod", ".sp", ".lib", ".cir", ".inc", ".txt"]
-                
+
                 for (root, dirs, files) in walkdir(extract_dir)
                     for file in files
                         _, ext = splitext(lowercase(file))
@@ -677,7 +681,7 @@ function process_archive(config::ArchiveConfig)
                     end
                 end
             end
-            
+
         catch ProcessFailedException
             # Not an archive - treat downloaded file as single SPICE file
             println("Not an archive, processing as bare SPICE file")
@@ -706,13 +710,15 @@ function process_archive(config::ArchiveConfig)
                     filename = basename(relative_path)
                     file_device_type = get(config.file_device_types, filename, nothing)
 
-                    # Convert to Mosaic format with archive URL
+                    # Convert to Mosaic format
+                    # For archives: use archive_url + relative_path (generates url#path)
+                    # For bare files: use nothing + url (generates just url)
                     file_result = to_mosaic_format(
                         extraction_result.models, extraction_result.subcircuits;
-                        source_file=relative_path,
+                        source_file=is_archive ? relative_path : config.url,
                         base_category=config.base_category,
                         mode=config.mode,
-                        archive_url=config.url,
+                        archive_url=is_archive ? config.url : nothing,
                         file_device_type=file_device_type
                     )
 
