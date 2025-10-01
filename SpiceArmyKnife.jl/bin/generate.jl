@@ -30,15 +30,22 @@ function main()
         ArchiveConfig(
             "https://ngspice.sourceforge.io/model-parameters/basic_models.7z",
             nothing,
-            ["Basic Models"],
-            :inline
+            ["Basic"],
+            :inline # public domain models
+        ),
+
+        ArchiveConfig(
+            "https://www.cordellaudio.com/book/Cordell-Models.txt",
+            nothing,
+            ["Cordell"],
+            :include # copyright Cordell Audio
         ),
 
         ArchiveConfig(
             "https://ngspice.sourceforge.io/model-parameters/MicroCap-LIBRARY.7z",
             nothing,
-            ["MicroCap Library"],
-            :inline;
+            ["MicroCap"],
+            :inline; # commercial restrictions may apply to some models
             file_device_types=Dict(
                 "KemetCeramicCaps.LIB" => "capacitor",
                 "KemetPolymerCaps.LIB" => "capacitor",
@@ -61,8 +68,8 @@ function main()
         ArchiveConfig(
             "https://github.com/CedarEDA/Sky130PDK.jl/archive/refs/heads/main.zip",
             ["Sky130PDK.jl-main/sky130A/libs.tech/ngspice/sky130.lib.spice"],
-            ["SkyWater 130nm PDK"],
-            :lib;
+            ["Sky130"],
+            :lib; # FOSSi but large
             lib_section="tt",  # Only process "tt" (typical) corner to avoid duplicates
             device_blacklist=r"__parasitic|__base"i  # Skip parasitic and base implementation devices
         ),
@@ -70,8 +77,8 @@ function main()
         ArchiveConfig(
             "https://github.com/CedarEDA/GF180MCUPDK.jl/archive/refs/heads/main.zip",
             ["GF180MCUPDK.jl-main/model/sm141064.ngspice"],
-            ["GF 180nm MCU PDK"],
-            :lib;
+            ["GF180MCU"],
+            :lib; # FOSSi but large
             lib_section="typical"
         )
     ]
