@@ -8,6 +8,7 @@ using SpectreNetlistParser: SpectreNetlistCSTParser, SPICENetlistParser
 using .SPICENetlistParser: SPICENetlistCSTParser
 using .SpectreNetlistCSTParser: SpectreNetlistSource
 using .SPICENetlistCSTParser: SPICENetlistSource
+using SpectreNetlistParser.RedTree: fullcontents
 using StringEncodings
 
 const SNode = SpectreNetlistCSTParser.Node
@@ -68,6 +69,7 @@ Fields:
 - encoding: File encoding (default: enc"UTF-8"). Use enc"ISO-8859-1" for older SPICE files with degree symbols
 - spice_dialect: SPICE dialect for lexer (:ngspice, :hspice, :pspice). Default: :ngspice
 - strict: Enforce dialect-specific parsing rules. Default: false
+- target_dialects: Vector of dialects to generate converted templates for (e.g., [:ngspice]). Default: Symbol[] (no conversions)
 """
 struct ArchiveConfig
     url::String
@@ -80,9 +82,10 @@ struct ArchiveConfig
     encoding::Encoding
     spice_dialect::Symbol
     strict::Bool
+    target_dialects::Vector{Symbol}
 
-    function ArchiveConfig(url, entrypoints, base_category, mode; lib_section=nothing, device_blacklist=nothing, file_device_types=Dict{String, String}(), encoding=enc"UTF-8", spice_dialect=:ngspice, strict=false)
-        new(url, entrypoints, base_category, mode, lib_section, device_blacklist, file_device_types, encoding, spice_dialect, strict)
+    function ArchiveConfig(url, entrypoints, base_category, mode; lib_section=nothing, device_blacklist=nothing, file_device_types=Dict{String, String}(), encoding=enc"UTF-8", spice_dialect=:ngspice, strict=false, target_dialects=Symbol[])
+        new(url, entrypoints, base_category, mode, lib_section, device_blacklist, file_device_types, encoding, spice_dialect, strict, target_dialects)
     end
 end
 
@@ -250,7 +253,8 @@ function extract_definitions(ast, config::ExtractionConfig, models::Vector{Any},
             # Check for PMOS indicators in parameters
             params = [LSymbol(p.name) for p in stmt.parameters]
             subtype = (:pchan in params || :pmos in params) ? :pmos : :nmos
-            code = String(stmt)
+            # Use fullcontents to capture preceding comments
+            code = fullcontents(stmt)
             push!(models, (name, typ, subtype, code))
         elseif isa(stmt, SNode{SC.Model})
             name = LSymbol(stmt.name)
@@ -262,7 +266,8 @@ function extract_definitions(ast, config::ExtractionConfig, models::Vector{Any},
             # Check for PMOS indicators in parameters
             params = [LSymbol(p.name) for p in stmt.parameters]
             subtype = (:pchan in params || :pmos in params) ? :pmos : :nmos
-            code = String(stmt)
+            # Use fullcontents to capture preceding comments
+            code = fullcontents(stmt)
             push!(models, (name, typ, subtype, code))
         elseif isa(stmt, SNode{SP.Subckt})
             name = LSymbol(stmt.name)
@@ -275,7 +280,8 @@ function extract_definitions(ast, config::ExtractionConfig, models::Vector{Any},
             params = [LSymbol(p.name) for p in stmt.parameters]
             # Add parameters from .param statements inside subcircuit
             extract_subckt_params!(stmt, params)
-            code = String(stmt)
+            # Use fullcontents to capture preceding comments
+            code = fullcontents(stmt)
             push!(subcircuits, (name, ports, params, code))
         elseif isa(stmt, SNode{SC.Subckt})
             name = LSymbol(stmt.name)
@@ -287,7 +293,8 @@ function extract_definitions(ast, config::ExtractionConfig, models::Vector{Any},
             params = Symbol[]
             # Add parameters from .param statements inside subcircuit
             extract_subckt_params!(stmt, params)
-            code = String(stmt)
+            # Use fullcontents to capture preceding comments
+            code = fullcontents(stmt)
             push!(subcircuits, (name, ports, params, code))
         end
     end
@@ -343,7 +350,7 @@ function extract_section_from_lib(p; section)
 end
 
 """
-    to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing, file_device_type=nothing)
+    to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing, file_device_type=nothing, target_dialects=Symbol[])
 
 Convert extracted SPICE/Spectre definitions to Mosaic model database format.
 
@@ -352,16 +359,17 @@ Each model/subcircuit becomes an entry with a generated _id.
 
 Parameters:
 - models: Vector of (name, type, subtype, code) tuples from extract_definitions
-- subcircuits: Vector of (name, ports, parameters, code) tuples from extract_definitions  
+- subcircuits: Vector of (name, ports, parameters, code) tuples from extract_definitions
 - source_file: Optional source filename for metadata
 - base_category: Base category path as vector of strings
 - mode: Either :inline (embed code directly), :include (use .include), or :lib (use .lib with {corner})
 - archive_url: For include/lib modes, the archive URL in zipurl#archive/path format
 - file_device_type: Override device type for all subcircuits in this file (e.g., "capacitor")
+- target_dialects: Vector of dialects to generate converted templates for (e.g., [:ngspice]). Only works with :inline mode.
 
 Returns Vector{Dict} with model definitions including _id keys.
 """
-function to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing, file_device_type=nothing)
+function to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing, file_device_type=nothing, target_dialects=Symbol[])
     result = Vector{Dict{String, Any}}()
     
     # Convert models (SPICE .model statements)
@@ -373,22 +381,44 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
             
             # Map SPICE device types directly to Mosaic types, using subtype for polarity
             mosaic_type = device_type_mapping(typ, subtype)
-            
+
             # Generate template code based on mode
             template_code = generate_template_code(code, mode, archive_url, source_file)
-            
+
+            # Build templates array: default first, then dialect-specific conversions
+            spice_templates = [Dict(
+                "name" => "default",
+                "code" => template_code,
+                "use-x" => false
+            )]
+
+            # Add dialect-specific conversions (only for :inline mode)
+            if mode == :inline && !isempty(target_dialects)
+                for dialect in target_dialects
+                    try
+                        # Parse the code and convert to target dialect
+                        ast = SpectreNetlistParser.parse(IOBuffer(code); start_lang=:spice, implicit_title=false)
+                        converted_code = generate_code(ast, :spice, dialect)
+
+                        push!(spice_templates, Dict(
+                            "name" => string(dialect),
+                            "code" => converted_code,
+                            "use-x" => false
+                        ))
+                    catch e
+                        println("  Warning: Failed to convert model $name to $dialect dialect: $e")
+                    end
+                end
+            end
+
             model_def = Dict{String, Any}(
                 "_id" => model_id,
                 "name" => string(name),
                 "type" => mosaic_type,
                 "category" => base_category,  # Put models in Models subcategory
-                # SPICE models define device templates, not schematic circuits  
+                # SPICE models define device templates, not schematic circuits
                 "templates" => Dict(
-                    "spice" => [Dict(
-                        "name" => "default",
-                        "code" => template_code,
-                        "use-x" => false
-                    )],
+                    "spice" => spice_templates,
                     "spectre" => Vector{Dict{String,Any}}(),
                     "verilog" => Vector{Dict{String,Any}}(),
                     "vhdl" => Vector{Dict{String,Any}}()
@@ -422,10 +452,36 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
             
             # Determine port layout using heuristics based on port names
             port_layout = determine_port_layout(ports)
-            
+
             # Generate template code based on mode
             template_code = generate_template_code(code, mode, archive_url, source_file)
-            
+
+            # Build templates array: default first, then dialect-specific conversions
+            spice_templates = [Dict(
+                "name" => "default",
+                "code" => template_code,
+                "use-x" => true  # subcircuits always use X prefix
+            )]
+
+            # Add dialect-specific conversions (only for :inline mode)
+            if mode == :inline && !isempty(target_dialects)
+                for dialect in target_dialects
+                    try
+                        # Parse the code and convert to target dialect
+                        ast = SpectreNetlistParser.parse(IOBuffer(code); start_lang=:spice, implicit_title=false)
+                        converted_code = generate_code(ast, :spice, dialect)
+
+                        push!(spice_templates, Dict(
+                            "name" => string(dialect),
+                            "code" => converted_code,
+                            "use-x" => true  # subcircuits always use X prefix
+                        ))
+                    catch e
+                        println("  Warning: Failed to convert subcircuit $name to $dialect dialect: $e")
+                    end
+                end
+            end
+
             model_def = Dict{String, Any}(
                 "_id" => model_id,
                 "name" => string(name),
@@ -433,11 +489,7 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
                 "category" => base_category,
                 "ports" => port_layout,
                 "templates" => Dict(
-                    "spice" => [Dict(
-                        "name" => "default", 
-                        "code" => template_code,
-                        "use-x" => true  # subcircuits always use X prefix
-                    )],
+                    "spice" => spice_templates,
                     "spectre" => Vector{Dict{String,Any}}(),
                     "verilog" => Vector{Dict{String,Any}}(),
                     "vhdl" => Vector{Dict{String,Any}}()
@@ -722,7 +774,8 @@ function process_archive(config::ArchiveConfig)
                         base_category=config.base_category,
                         mode=config.mode,
                         archive_url=is_archive ? config.url : nothing,
-                        file_device_type=file_device_type
+                        file_device_type=file_device_type,
+                        target_dialects=config.target_dialects
                     )
 
                     # Append results

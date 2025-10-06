@@ -595,8 +595,23 @@ const NGSPICE_DOC_ONLY_PARAMS = Set{Symbol}([
     :vceo,      # Collector-emitter voltage (documentation)
 ])
 
+"""
+    write_leading_trivia(scope::CodeGenScope, n::SNode)
+
+Write the leading trivia (whitespace and comments) for a node.
+"""
+function write_leading_trivia(scope::CodeGenScope, n::SNode)
+    # Leading trivia is from n.startof to n.startof + n.expr.off
+    if n.expr.off > 0
+        SpectreNetlistParser.RedTree.print_contents(scope.io, n.ps, n.startof, n.startof + n.expr.off - 1)
+    end
+end
+
 # ngspice-specific Model handler - filters documentation-only parameters
 function (scope::CodeGenScope{:spice, :ngspice})(n::SNode{SP.Model})
+    # Preserve leading comments
+    write_leading_trivia(scope, n)
+
     print(scope.io, ".model ")
     scope(n.name)
     print(scope.io, " ")

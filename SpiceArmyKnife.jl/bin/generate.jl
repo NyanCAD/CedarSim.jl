@@ -38,7 +38,8 @@ function main()
             "https://www.cordellaudio.com/book/Cordell-Models.txt",
             nothing,
             ["Cordell"],
-            :include # copyright Cordell Audio
+            :inline; # copyright Cordell Audio (preserved in model comments)
+            target_dialects=[:ngspice]
         ),
 
         ArchiveConfig(
