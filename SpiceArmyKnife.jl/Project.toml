@@ -4,6 +4,7 @@ authors = ["Pepijn de Vos <pepijndevos@gmail.com>"]
 version = "0.1.0"
 
 [deps]
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
@@ -14,9 +15,13 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 p7zip_jll = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 
 [compat]
+ArgParse = "1.2.0"
 Downloads = "1.6.0"
 HTTP = "1.10.17"
 JSON = "0.21.4"
 StringEncodings = "0.3.7"
 UUIDs = "1.11.0"
 p7zip_jll = "17.4.0"
+
+[workspace]
+projects = ["test"]

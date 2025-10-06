@@ -16,6 +16,9 @@ const SP = SPICENetlistCSTParser
 
 LSymbol(s) = Symbol(lowercase(String(s)))
 
+# Include code generation module
+include("codegen.jl")
+
 """
     ExtractionConfig
 
@@ -767,5 +770,7 @@ end
 
 
 export extract_definitions, extract_definitions_from_file, to_mosaic_format, process_archive, ArchiveConfig, ExtractionConfig, detect_device_type_from_name
+# Code generation exports
+export CodeGenScope, generate_code
 
 end # module SpiceArmyKnife
