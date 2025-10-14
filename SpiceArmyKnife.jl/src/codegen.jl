@@ -4,9 +4,10 @@
 # It mirrors the structure of src/spectre.jl but generates netlist code instead of Julia code.
 #
 # Key design:
-# - Parametric CodeGenScope{Lang, Dialect} for language/dialect-specific generation
+# - Parametric CodeGenScope{Sim} where Sim <: AbstractSimulator for simulator-specific generation
 # - Default implementation preserves original formatting via String(node)
 # - Override specific node types for dialect conversion and parameter filtering
+# - Use trait functions (hasdocprops, magnitude_suffixes, etc.) to handle simulator quirks
 # - Non-recursive (single file) - caller handles include/lib traversal
 
 # Import types from parent module - reuse parent's imports
@@ -18,40 +19,46 @@ using ..SpectreNetlistParser.RedTree: fullcontents
 # Import error checking
 using ..SpectreNetlistParser: visit_errors
 
+# Include simulator traits (defines types and trait functions)
+include("simulator_traits.jl")
+
 """
-    CodeGenScope{Lang, Dialect}
+    CodeGenScope{Sim}
 
 Scope for generating SPICE/Spectre code from AST.
 
 Type parameters:
-- `Lang`: Language symbol (`:spice` or `:spectre`)
-- `Dialect`: Dialect symbol (`:ngspice`, `:hspice`, `:pspice`, `:spectre`, etc.)
+- `Sim <: AbstractSimulator`: Simulator type (Ngspice, Hspice, Pspice, Xyce, SpectreADE, etc.)
 
 Fields:
 - `io`: Output IO buffer
 - `indent`: Current indentation level (for readability)
-- `options`: Dict for dialect-specific options
+- `options`: Dict for simulator-specific options
 
-The parametric type allows method specialization for different language/dialect combinations:
+The parametric type allows method specialization for different simulators:
 ```julia
-(scope::CodeGenScope{:spice, :ngspice})(node::SNode{SP.MOSFET})  # ngspice-specific MOSFET
-(scope::CodeGenScope{:spectre, :spectre})(node::SNode{SC.Instance})  # Spectre instance
+(scope::CodeGenScope{Ngspice})(node::SNode{SP.Model})  # ngspice-specific Model
+(scope::CodeGenScope{SpectreADE})(node::SNode{SC.Instance})  # Spectre instance
 ```
+
+Simulator-specific behavior is controlled by trait functions like:
+- `hasdocprops(Sim())` - whether to filter documentation parameters
+- `magnitude_suffixes(Sim())` - supported magnitude suffixes
 """
-struct CodeGenScope{Lang, Dialect}
+struct CodeGenScope{Sim <: AbstractSimulator}
     io::IO
     indent::Int
     options::Dict{Symbol, Any}
 end
 
 # Constructor with default options
-function CodeGenScope{Lang, Dialect}(io::IO, indent::Int=0) where {Lang, Dialect}
-    CodeGenScope{Lang, Dialect}(io, indent, Dict{Symbol, Any}())
+function CodeGenScope{Sim}(io::IO, indent::Int=0) where {Sim <: AbstractSimulator}
+    CodeGenScope{Sim}(io, indent, Dict{Symbol, Any}())
 end
 
 # Helper to create new scope with modified indent
-with_indent(scope::CodeGenScope{L, D}, delta::Int) where {L, D} =
-    CodeGenScope{L, D}(scope.io, scope.indent + delta, scope.options)
+with_indent(scope::CodeGenScope{Sim}, delta::Int) where {Sim <: AbstractSimulator} =
+    CodeGenScope{Sim}(scope.io, scope.indent + delta, scope.options)
 
 """
     write_indent(scope::CodeGenScope)
@@ -581,19 +588,8 @@ function (scope::CodeGenScope)(n::SNode{SC.Instance})
 end
 
 # =============================================================================
-# Dialect-Specific Specializations
+# Simulator-Specific Specializations Using Traits
 # =============================================================================
-
-# ngspice documentation-only model parameters to filter out
-# These parameters are for documentation and are not recognized by ngspice
-const NGSPICE_DOC_ONLY_PARAMS = Set{Symbol}([
-    :iave,      # Average current (documentation)
-    :vpk,       # Peak voltage (documentation)
-    :mfg,       # Manufacturer code (documentation)
-    :type,      # Device type description (documentation)
-    :icrating,  # Current rating (documentation)
-    :vceo,      # Collector-emitter voltage (documentation)
-])
 
 """
     write_leading_trivia(scope::CodeGenScope, n::SNode)
@@ -607,8 +603,25 @@ function write_leading_trivia(scope::CodeGenScope, n::SNode)
     end
 end
 
-# ngspice-specific Model handler - filters documentation-only parameters
-function (scope::CodeGenScope{:spice, :ngspice})(n::SNode{SP.Model})
+"""
+    should_filter_param(scope::CodeGenScope{Sim}, param_name::Symbol) where {Sim}
+
+Check if a parameter should be filtered out for the target simulator.
+Uses the hasdocprops trait to determine if documentation parameters should be kept.
+"""
+function should_filter_param(scope::CodeGenScope{Sim}, param_name::Symbol) where {Sim}
+    # If simulator supports doc props, don't filter anything
+    if hasdocprops(Sim())
+        return false
+    end
+
+    # Otherwise, check if this param is a doc-only param
+    return param_name ∈ doc_only_params(Sim())
+end
+
+# SPICE Model handler for simulators that don't support documentation parameters
+# This uses the trait system to filter parameters based on simulator capabilities
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractSpiceSimulator}
     # Preserve leading comments
     write_leading_trivia(scope, n)
 
@@ -618,7 +631,8 @@ function (scope::CodeGenScope{:spice, :ngspice})(n::SNode{SP.Model})
     scope(n.typ)
     for param in n.parameters
         param_name = lowercase(String(param.name))
-        if Symbol(param_name) ∉ NGSPICE_DOC_ONLY_PARAMS
+        # Use trait-based filtering instead of hard-coded constant
+        if !should_filter_param(scope, Symbol(param_name))
             print(scope.io, " ")
             scope(param)
         end
@@ -650,15 +664,14 @@ end
 # =============================================================================
 
 """
-    generate_code(ast::SNode, lang::Symbol, dialect::Symbol; options::Dict=Dict()) -> String
+    generate_code(ast::SNode, simulator::AbstractSimulator; options::Dict=Dict()) -> String
 
-Generate SPICE/Spectre code from parsed AST.
+Generate SPICE/Spectre code from parsed AST for a specific simulator.
 
 Arguments:
 - `ast`: Parsed netlist AST (from SpectreNetlistParser)
-- `lang`: Target language (`:spice` or `:spectre`)
-- `dialect`: Target dialect (`:ngspice`, `:hspice`, `:pspice`, `:spectre`, etc.)
-- `options`: Optional dialect-specific options
+- `simulator`: Target simulator instance (Ngspice(), Hspice(), Pspice(), Xyce(), SpectreADE())
+- `options`: Optional simulator-specific options
 
 Returns:
 - Generated code as String
@@ -671,12 +684,13 @@ Example:
 # Parse SPICE file
 ast = SpectreNetlistParser.parsefile("input.sp")
 
-# Generate different dialects
-spectre_code = generate_code(ast, :spectre, :spectre)
-hspice_code = generate_code(ast, :spice, :hspice)
+# Generate for different simulators
+ngspice_code = generate_code(ast, Ngspice())
+hspice_code = generate_code(ast, Hspice())
+spectre_code = generate_code(ast, SpectreADE())
 ```
 """
-function generate_code(ast::SNode, lang::Symbol, dialect::Symbol; options::Dict=Dict{Symbol, Any}())
+function generate_code(ast::SNode, simulator::AbstractSimulator; options::Dict=Dict{Symbol, Any}())
     # Check for parse errors and warn user
     if ast.ps.errored
         @warn "AST contains parse errors. Error lines will not be reformatted."
@@ -684,42 +698,50 @@ function generate_code(ast::SNode, lang::Symbol, dialect::Symbol; options::Dict=
     end
 
     io = IOBuffer()
-    scope = CodeGenScope{lang, dialect}(io, 0, options)
+    scope = CodeGenScope{typeof(simulator)}(io, 0, options)
     scope(ast)
     return String(take!(io))
 end
 
 """
-    generate_code(ast::SNode, io::IO, lang::Symbol, dialect::Symbol; options::Dict=Dict())
+    generate_code(ast::SNode, io::IO, simulator::AbstractSimulator; options::Dict=Dict())
 
-Generate SPICE/Spectre code to an IO stream.
+Generate SPICE/Spectre code to an IO stream for a specific simulator.
 
 Arguments:
 - `ast`: Parsed netlist AST
 - `io`: Output IO stream
-- `lang`: Target language
-- `dialect`: Target dialect
-- `options`: Optional dialect-specific options
+- `simulator`: Target simulator instance
+- `options`: Optional simulator-specific options
 
 Note: If the AST contains parse errors, a warning will be printed. Error lines will
 be preserved as-is without reformatting.
 
 Example:
 ```julia
-open("output.scs", "w") do io
-    generate_code(ast, io, :spectre, :spectre)
+open("output.sp", "w") do io
+    generate_code(ast, io, Ngspice())
 end
 ```
 """
-function generate_code(ast::SNode, io::IO, lang::Symbol, dialect::Symbol; options::Dict=Dict{Symbol, Any}())
+function generate_code(ast::SNode, io::IO, simulator::AbstractSimulator; options::Dict=Dict{Symbol, Any}())
     # Check for parse errors and warn user
     if ast.ps.errored
         @warn "AST contains parse errors. Error lines will not be reformatted."
         visit_errors(ast; io=stderr)
     end
 
-    scope = CodeGenScope{lang, dialect}(io, 0, options)
+    scope = CodeGenScope{typeof(simulator)}(io, 0, options)
     scope(ast)
 end
 
+
 export CodeGenScope, generate_code, write_indent, write_terminal, newline, with_indent
+
+# Export simulator types and traits from this module
+export AbstractSimulator, AbstractSpiceSimulator, AbstractSpectreSimulator
+export Ngspice, Hspice, Pspice, Xyce, SpectreADE
+export language, hasdocprops, doc_only_params, magnitude_suffixes
+export supports_bsim_models, supports_verilog_a
+export requires_explicit_title, case_sensitive
+export simulator_from_symbol, symbol_from_simulator

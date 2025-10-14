@@ -67,9 +67,9 @@ Fields:
 - device_blacklist: Regex pattern to skip device names (use alternation like r"__parasitic|__base"i)
 - file_device_types: Dict mapping filename -> device type for file-level overrides
 - encoding: File encoding (default: enc"UTF-8"). Use enc"ISO-8859-1" for older SPICE files with degree symbols
-- spice_dialect: SPICE dialect for lexer (:ngspice, :hspice, :pspice). Default: :ngspice
+- simulator: Simulator for parsing (e.g., Ngspice(), Hspice()). Default: Ngspice()
 - strict: Enforce dialect-specific parsing rules. Default: false
-- target_dialects: Vector of dialects to generate converted templates for (e.g., [:ngspice]). Default: Symbol[] (no conversions)
+- target_simulators: Vector of simulators to generate converted templates for (e.g., [Ngspice()]). Default: AbstractSimulator[] (no conversions)
 """
 struct ArchiveConfig
     url::String
@@ -80,12 +80,12 @@ struct ArchiveConfig
     device_blacklist::Union{Regex, Nothing}
     file_device_types::Dict{String, String}
     encoding::Encoding
-    spice_dialect::Symbol
+    simulator::AbstractSimulator
     strict::Bool
-    target_dialects::Vector{Symbol}
+    target_simulators::Vector{AbstractSimulator}
 
-    function ArchiveConfig(url, entrypoints, base_category, mode; lib_section=nothing, device_blacklist=nothing, file_device_types=Dict{String, String}(), encoding=enc"UTF-8", spice_dialect=:ngspice, strict=false, target_dialects=Symbol[])
-        new(url, entrypoints, base_category, mode, lib_section, device_blacklist, file_device_types, encoding, spice_dialect, strict, target_dialects)
+    function ArchiveConfig(url, entrypoints, base_category, mode; lib_section=nothing, device_blacklist=nothing, file_device_types=Dict{String, String}(), encoding=enc"UTF-8", simulator=Ngspice(), strict=false, target_simulators=AbstractSimulator[])
+        new(url, entrypoints, base_category, mode, lib_section, device_blacklist, file_device_types, encoding, simulator, strict, target_simulators)
     end
 end
 
@@ -114,18 +114,19 @@ function generate_template_code(code, mode, archive_url, file_path)
 end
 
 """
-    extract_definitions_from_file(filepath::String; lib_section=nothing, device_blacklist=nothing, encoding=enc"UTF-8", spice_dialect=:ngspice, strict=false) -> (models, subcircuits)
+    extract_definitions_from_file(filepath::String; lib_section=nothing, device_blacklist=nothing, encoding=enc"UTF-8", simulator=Ngspice(), strict=false) -> (models, subcircuits)
 
 Parse a SPICE/Spectre file and extract model and subcircuit definitions.
 Uses automatic file extension detection (.scs = Spectre, others = SPICE).
 Handles .include and .lib statements by recursively parsing referenced files.
 
-The spice_dialect parameter controls SPICE lexer behavior (:ngspice, :hspice, :pspice).
+The simulator parameter controls SPICE lexer behavior (Ngspice(), Hspice(), Pspice()).
 The strict parameter enforces dialect-specific rules when true.
 """
-function extract_definitions_from_file(filepath::String; lib_section=nothing, device_blacklist=nothing, encoding=enc"UTF-8", spice_dialect=:ngspice, strict=false)
+function extract_definitions_from_file(filepath::String; lib_section=nothing, device_blacklist=nothing, encoding=enc"UTF-8", simulator=Ngspice(), strict=false)
     # Read file with specified encoding
     content = read(filepath, String, encoding)
+    spice_dialect = symbol_from_simulator(simulator)
     ast = SpectreNetlistParser.parse(IOBuffer(content); fname=filepath, implicit_title=false, spice_dialect, strict)
     if ast.ps.errored
         #SpectreNetlistParser.visit_errors(ast)
@@ -350,7 +351,7 @@ function extract_section_from_lib(p; section)
 end
 
 """
-    to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing, file_device_type=nothing, target_dialects=Symbol[])
+    to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing, file_device_type=nothing, target_simulators=AbstractSimulator[])
 
 Convert extracted SPICE/Spectre definitions to Mosaic model database format.
 
@@ -365,11 +366,11 @@ Parameters:
 - mode: Either :inline (embed code directly), :include (use .include), or :lib (use .lib with {corner})
 - archive_url: For include/lib modes, the archive URL in zipurl#archive/path format
 - file_device_type: Override device type for all subcircuits in this file (e.g., "capacitor")
-- target_dialects: Vector of dialects to generate converted templates for (e.g., [:ngspice]). Only works with :inline mode.
+- target_simulators: Vector of simulators to generate converted templates for (e.g., [Ngspice()]). Only works with :inline mode.
 
 Returns Vector{Dict} with model definitions including _id keys.
 """
-function to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing, file_device_type=nothing, target_dialects=Symbol[])
+function to_mosaic_format(models, subcircuits; source_file=nothing, base_category=String[], mode=:inline, archive_url=nothing, file_device_type=nothing, target_simulators=AbstractSimulator[])
     result = Vector{Dict{String, Any}}()
     
     # Convert models (SPICE .model statements)
@@ -392,21 +393,21 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
                 "use-x" => false
             )]
 
-            # Add dialect-specific conversions (only for :inline mode)
-            if mode == :inline && !isempty(target_dialects)
-                for dialect in target_dialects
+            # Add simulator-specific conversions (only for :inline mode)
+            if mode == :inline && !isempty(target_simulators)
+                for sim in target_simulators
                     try
-                        # Parse the code and convert to target dialect
+                        # Parse the code and convert to target simulator
                         ast = SpectreNetlistParser.parse(IOBuffer(code); start_lang=:spice, implicit_title=false)
-                        converted_code = generate_code(ast, :spice, dialect)
+                        converted_code = generate_code(ast, sim)
 
                         push!(spice_templates, Dict(
-                            "name" => string(dialect),
+                            "name" => string(symbol_from_simulator(sim)),
                             "code" => converted_code,
                             "use-x" => false
                         ))
                     catch e
-                        println("  Warning: Failed to convert model $name to $dialect dialect: $e")
+                        println("  Warning: Failed to convert model $name to $(typeof(sim)) simulator: $e")
                     end
                 end
             end
@@ -463,21 +464,21 @@ function to_mosaic_format(models, subcircuits; source_file=nothing, base_categor
                 "use-x" => true  # subcircuits always use X prefix
             )]
 
-            # Add dialect-specific conversions (only for :inline mode)
-            if mode == :inline && !isempty(target_dialects)
-                for dialect in target_dialects
+            # Add simulator-specific conversions (only for :inline mode)
+            if mode == :inline && !isempty(target_simulators)
+                for sim in target_simulators
                     try
-                        # Parse the code and convert to target dialect
+                        # Parse the code and convert to target simulator
                         ast = SpectreNetlistParser.parse(IOBuffer(code); start_lang=:spice, implicit_title=false)
-                        converted_code = generate_code(ast, :spice, dialect)
+                        converted_code = generate_code(ast, sim)
 
                         push!(spice_templates, Dict(
-                            "name" => string(dialect),
+                            "name" => string(symbol_from_simulator(sim)),
                             "code" => converted_code,
                             "use-x" => true  # subcircuits always use X prefix
                         ))
                     catch e
-                        println("  Warning: Failed to convert subcircuit $name to $dialect dialect: $e")
+                        println("  Warning: Failed to convert subcircuit $name to $(typeof(sim)) simulator: $e")
                     end
                 end
             end
@@ -752,7 +753,7 @@ function process_archive(config::ArchiveConfig)
 
             try
                 # Extract definitions from file
-                extraction_result = extract_definitions_from_file(full_path; lib_section=config.lib_section, device_blacklist=config.device_blacklist, encoding=config.encoding, spice_dialect=config.spice_dialect, strict=config.strict)
+                extraction_result = extract_definitions_from_file(full_path; lib_section=config.lib_section, device_blacklist=config.device_blacklist, encoding=config.encoding, simulator=config.simulator, strict=config.strict)
 
                 # Merge error statistics
                 for (error_type, count) in extraction_result.error_stats
@@ -775,7 +776,7 @@ function process_archive(config::ArchiveConfig)
                         mode=config.mode,
                         archive_url=is_archive ? config.url : nothing,
                         file_device_type=file_device_type,
-                        target_dialects=config.target_dialects
+                        target_simulators=config.target_simulators
                     )
 
                     # Append results
