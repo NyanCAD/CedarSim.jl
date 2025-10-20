@@ -238,3 +238,37 @@ symbol_from_simulator(::Xyce) = :xyce
 symbol_from_simulator(::SpectreADE) = :spectre
 symbol_from_simulator(::OpenVAF) = :openvaf
 symbol_from_simulator(::Gnucap) = :gnucap
+
+"""
+    simulator_from_symbol(dialect::Symbol) -> AbstractSimulator
+
+Convert a dialect symbol to a simulator type instance.
+
+Supported dialects:
+- `:ngspice` → Ngspice()
+- `:hspice` → Hspice()
+- `:pspice` → Pspice()
+- `:xyce` → Xyce()
+- `:spectre` → SpectreADE()
+- `:openvaf` → OpenVAF()
+- `:gnucap` → Gnucap()
+
+Throws an error if the dialect is not recognized.
+"""
+function simulator_from_symbol(dialect::Symbol)
+    dialect_map = Dict(
+        :ngspice => Ngspice(),
+        :hspice => Hspice(),
+        :pspice => Pspice(),
+        :xyce => Xyce(),
+        :spectre => SpectreADE(),
+        :openvaf => OpenVAF(),
+        :gnucap => Gnucap(),
+    )
+
+    if !haskey(dialect_map, dialect)
+        error("Unknown dialect: $dialect. Supported dialects: $(join(keys(dialect_map), ", "))")
+    end
+
+    return dialect_map[dialect]
+end
