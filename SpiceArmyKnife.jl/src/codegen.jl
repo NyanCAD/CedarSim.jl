@@ -7,7 +7,7 @@
 # - Parametric CodeGenScope{Sim} where Sim <: AbstractSimulator for simulator-specific generation
 # - Default implementation preserves original formatting via String(node)
 # - Override specific node types for dialect conversion and parameter filtering
-# - Use trait functions (hasdocprops, magnitude_suffixes, etc.) to handle simulator quirks
+# - Use trait functions (hasdocprops, temperature_param_mapping, etc.) to handle simulator quirks
 # - Non-recursive (single file) - caller handles include/lib traversal
 
 # Import types from parent module - reuse parent's imports
@@ -43,7 +43,7 @@ The parametric type allows method specialization for different simulators:
 
 Simulator-specific behavior is controlled by trait functions like:
 - `hasdocprops(Sim())` - whether to filter documentation parameters
-- `magnitude_suffixes(Sim())` - supported magnitude suffixes
+- `temperature_param_mapping(Sim())` - parameter name conversions for dialect compatibility
 """
 struct CodeGenScope{Sim <: AbstractSimulator}
     io::IO
@@ -619,8 +619,32 @@ function should_filter_param(scope::CodeGenScope{Sim}, param_name::Symbol) where
     return param_name ∈ doc_only_params(Sim())
 end
 
-# SPICE Model handler for simulators that don't support documentation parameters
-# This uses the trait system to filter parameters based on simulator capabilities
+"""
+    convert_param_name(scope::CodeGenScope{Sim}, param_name::Symbol) where {Sim}
+
+Convert a parameter name if needed for the target simulator.
+Uses the temperature_param_mapping trait to handle PSPICE → Ngspice conversions.
+
+Returns the converted parameter name, or the original if no conversion is needed.
+"""
+function convert_param_name(scope::CodeGenScope{Sim}, param_name::Symbol) where {Sim}
+    # Get temperature parameter mapping for this simulator
+    temp_mapping = temperature_param_mapping(Sim())
+
+    # Check if this parameter needs conversion
+    param_lower = Symbol(lowercase(string(param_name)))
+    if haskey(temp_mapping, param_lower)
+        return temp_mapping[param_lower]
+    end
+
+    # No conversion needed
+    return param_name
+end
+
+# SPICE Model handler for simulators that require parameter conversion or filtering
+# This uses the trait system to:
+# 1. Filter documentation parameters based on simulator capabilities
+# 2. Convert PSPICE temperature parameters to standard SPICE names
 function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractSpiceSimulator}
     # Preserve leading comments
     write_leading_trivia(scope, n)
@@ -630,11 +654,30 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractSp
     print(scope.io, " ")
     scope(n.typ)
     for param in n.parameters
-        param_name = lowercase(String(param.name))
-        # Use trait-based filtering instead of hard-coded constant
-        if !should_filter_param(scope, Symbol(param_name))
-            print(scope.io, " ")
-            scope(param)
+        param_name_str = String(param.name)
+        param_name_sym = Symbol(lowercase(param_name_str))
+
+        # Use trait-based filtering for documentation parameters
+        if should_filter_param(scope, param_name_sym)
+            continue  # Skip this parameter
+        end
+
+        # Check if parameter name needs conversion (e.g., PSPICE → Ngspice)
+        converted_name = convert_param_name(scope, param_name_sym)
+
+        print(scope.io, " ")
+        if converted_name != param_name_sym
+            # Parameter name was converted - output new name
+            print(scope.io, uppercase(string(converted_name)))
+        else
+            # No conversion - output original name with original casing
+            scope(param.name)
+        end
+
+        # Always output the parameter value
+        if param.val !== nothing
+            print(scope.io, "=")
+            scope(param.val)
         end
     end
     println(scope.io)
@@ -739,9 +782,7 @@ end
 export CodeGenScope, generate_code, write_indent, write_terminal, newline, with_indent
 
 # Export simulator types and traits from this module
-export AbstractSimulator, AbstractSpiceSimulator, AbstractSpectreSimulator
-export Ngspice, Hspice, Pspice, Xyce, SpectreADE
-export language, hasdocprops, doc_only_params, magnitude_suffixes
-export supports_bsim_models, supports_verilog_a
-export requires_explicit_title, case_sensitive
-export simulator_from_symbol, symbol_from_simulator
+export AbstractSimulator, AbstractSpiceSimulator, AbstractSpectreSimulator, AbstractVerilogASimulator
+export Ngspice, Hspice, Pspice, Xyce, SpectreADE, OpenVAF, Gnucap
+export language, hasdocprops, doc_only_params, temperature_param_mapping
+export symbol_from_simulator

@@ -124,6 +124,76 @@ I1 (n1 n2 vdd gnd) inv
             @test !occursin("Icrating", output)
             @test !occursin("type=", output)
         end
+
+        @testset "PSPICE temperature parameter conversion" begin
+            @testset "ngspice converts PSPICE temperature parameters" begin
+                # Model with PSPICE-specific temperature parameters (from MicroCap library)
+                spice = ".model DBDMOD D IS=1E-015 N=0.5 T_MEASURED=25 T_ABS=25\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, Ngspice())
+
+                # Should contain standard parameters unchanged
+                @test occursin("IS=1E-015", output)
+                @test occursin("N=0.5", output)
+
+                # PSPICE temperature parameters should be converted
+                @test occursin("TNOM=25", output)    # T_MEASURED → TNOM
+                @test occursin("TEMP=25", output)    # T_ABS → TEMP
+
+                # Should NOT contain original PSPICE names
+                @test !occursin("T_MEASURED", output)
+                @test !occursin("T_ABS", output)
+            end
+
+            @testset "pspice preserves PSPICE temperature parameters" begin
+                # Model with PSPICE-specific temperature parameters
+                spice = ".model DBDMOD D IS=1E-015 N=0.5 T_MEASURED=25 T_ABS=25\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, Pspice())
+
+                # Should preserve PSPICE temperature parameter names
+                @test occursin("T_MEASURED=25", output)
+                @test occursin("T_ABS=25", output)
+
+                # Should NOT have converted names
+                @test !occursin("TNOM", output)
+                @test !occursin("TEMP=", output)
+            end
+
+            @testset "T_REL_GLOBAL conversion" begin
+                # Test T_REL_GLOBAL → dtemp conversion
+                spice = ".model TESTMOD D IS=1E-12 T_REL_GLOBAL=5\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, Ngspice())
+
+                @test occursin("DTEMP=5", output)
+                @test !occursin("T_REL_GLOBAL", output)
+            end
+
+            @testset "Mixed temperature and other parameters" begin
+                # Real-world example from MicroCap vishaydiode.lib
+                spice = ".MODEL RBVCMOD RES TC1=0.00107 T_MEASURED=25\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, Ngspice())
+
+                # Should preserve TC1 unchanged
+                @test occursin("TC1=0.00107", output)
+                # Should convert T_MEASURED
+                @test occursin("TNOM=25", output)
+                @test !occursin("T_MEASURED", output)
+            end
+
+            @testset "Case insensitive conversion" begin
+                # Temperature parameter names should be case-insensitive
+                spice = ".model TEST D t_abs=25 T_MEASURED=30 T_Rel_Global=5\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, Ngspice())
+
+                @test occursin("TEMP=25", output)
+                @test occursin("TNOM=30", output)
+                @test occursin("DTEMP=5", output)
+            end
+        end
     end
 
     @testset "SPICE Subcircuits" begin

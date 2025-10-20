@@ -46,6 +46,14 @@ These simulators use Spectre netlist syntax.
 """
 abstract type AbstractSpectreSimulator <: AbstractSimulator end
 
+"""
+    AbstractVerilogASimulator <: AbstractSimulator
+
+Base type for Verilog-A simulators.
+These simulators compile and execute Verilog-A behavioral models.
+"""
+abstract type AbstractVerilogASimulator <: AbstractSimulator end
+
 # =============================================================================
 # Concrete Simulator Types
 # =============================================================================
@@ -90,6 +98,23 @@ Cadence Spectre - commercial circuit simulator with its own netlist syntax.
 """
 struct SpectreADE <: AbstractSpectreSimulator end
 
+# Verilog-A simulators
+"""
+    OpenVAF <: AbstractVerilogASimulator
+
+OpenVAF - open source Verilog-A compiler and simulator.
+Compiles Verilog-A models to optimized machine code.
+"""
+struct OpenVAF <: AbstractVerilogASimulator end
+
+"""
+    Gnucap <: AbstractVerilogASimulator
+
+GNU Circuit Analysis Package - open source general purpose circuit simulator.
+Supports Verilog-A behavioral models through plugin system.
+"""
+struct Gnucap <: AbstractVerilogASimulator end
+
 # =============================================================================
 # Language Trait
 # =============================================================================
@@ -97,10 +122,11 @@ struct SpectreADE <: AbstractSpectreSimulator end
 """
     language(::AbstractSimulator) -> Symbol
 
-Returns the netlist language used by the simulator (`:spice` or `:spectre`).
+Returns the netlist language used by the simulator (`:spice`, `:spectre`, or `:verilog_a`).
 """
 language(::AbstractSpiceSimulator) = :spice
 language(::AbstractSpectreSimulator) = :spectre
+language(::AbstractVerilogASimulator) = :verilog_a
 
 # =============================================================================
 # Documentation Property Trait
@@ -152,133 +178,63 @@ function doc_only_params(sim::AbstractSimulator)
 end
 
 # =============================================================================
-# Magnitude Suffix Trait
+# PSPICE Temperature Parameter Conversion Trait
 # =============================================================================
 
 """
-    magnitude_suffixes(simulator::AbstractSimulator) -> Dict{String, Float64}
+    temperature_param_mapping(simulator::AbstractSimulator) -> Dict{Symbol, Symbol}
 
-Returns the magnitude suffixes supported by the simulator and their multipliers.
+Returns a mapping of PSPICE-specific temperature parameter names to standard SPICE names.
 
-SPICE uses case-insensitive suffixes like:
-- T (tera, 1e12), G (giga, 1e9), MEG (mega, 1e6), K (kilo, 1e3)
-- M (milli, 1e-3), U (micro, 1e-6), N (nano, 1e-9), P (pico, 1e-12), F (femto, 1e-15)
+PSPICE uses proprietary temperature parameter names that need conversion for other simulators:
+- `T_ABS` → `temp` (absolute temperature)
+- `T_REL_GLOBAL` → `dtemp` (relative temperature offset)
+- `T_MEASURED` → `TNOM` (nominal/measurement temperature)
 
-Note: 'M' is ambiguous - could be mega or milli depending on context.
-SPICE convention: uppercase M = milli, MEG = mega (case-insensitive).
+This trait enables automatic parameter name conversion when generating netlists.
+
+Default behavior (for PSPICE/HSPICE): Returns empty dict (no conversion)
+Ngspice/Xyce: Returns conversion mapping
+
+Reference: ngspice inpcompat.c:1061-1075 (PSPICE compatibility mode)
 """
-function magnitude_suffixes(::AbstractSpiceSimulator)
-    Dict{String, Float64}(
-        "T"   => 1e12,
-        "G"   => 1e9,
-        "MEG" => 1e6,
-        "K"   => 1e3,
-        "M"   => 1e-3,
-        "U"   => 1e-6,
-        "N"   => 1e-9,
-        "P"   => 1e-12,
-        "F"   => 1e-15,
-        "A"   => 1e-18,
+function temperature_param_mapping(::AbstractSimulator)
+    # Default: no conversion (preserve PSPICE names)
+    return Dict{Symbol, Symbol}()
+end
+
+# Ngspice requires PSPICE temperature parameters to be converted
+function temperature_param_mapping(::Ngspice)
+    Dict{Symbol, Symbol}(
+        :t_abs => :temp,           # Absolute temperature
+        :t_rel_global => :dtemp,   # Relative temperature (delta)
+        :t_measured => :tnom,      # Nominal/measurement temperature
     )
 end
 
-# Spectre uses different conventions
-function magnitude_suffixes(::AbstractSpectreSimulator)
-    Dict{String, Float64}(
-        "T"  => 1e12,
-        "G"  => 1e9,
-        "M"  => 1e6,   # Spectre: M = mega
-        "K"  => 1e3,
-        "m"  => 1e-3,  # Spectre: lowercase m = milli
-        "u"  => 1e-6,
-        "n"  => 1e-9,
-        "p"  => 1e-12,
-        "f"  => 1e-15,
-        "a"  => 1e-18,
+# Xyce also requires conversion (similar to Ngspice)
+function temperature_param_mapping(::Xyce)
+    Dict{Symbol, Symbol}(
+        :t_abs => :temp,
+        :t_rel_global => :dtemp,
+        :t_measured => :tnom,
     )
 end
-
-# =============================================================================
-# Device Support Traits (for future expansion)
-# =============================================================================
-
-"""
-    supports_bsim_models(simulator::AbstractSimulator) -> Bool
-
-Returns true if the simulator supports BSIM MOSFET models.
-"""
-supports_bsim_models(::AbstractSpiceSimulator) = true
-supports_bsim_models(::AbstractSpectreSimulator) = true
-
-"""
-    supports_verilog_a(simulator::AbstractSimulator) -> Bool
-
-Returns true if the simulator supports Verilog-A behavioral models.
-"""
-supports_verilog_a(::Ngspice) = false  # Ngspice has limited Verilog-A support
-supports_verilog_a(::AbstractSimulator) = true
-
-# =============================================================================
-# Syntax Quirks (for future expansion)
-# =============================================================================
-
-"""
-    requires_explicit_title(simulator::AbstractSimulator) -> Bool
-
-Returns true if the simulator requires an explicit title line (first line of netlist).
-"""
-requires_explicit_title(::AbstractSpiceSimulator) = true  # SPICE requires title
-requires_explicit_title(::AbstractSpectreSimulator) = false  # Spectre doesn't
-
-"""
-    case_sensitive(simulator::AbstractSimulator) -> Bool
-
-Returns true if the simulator treats identifiers as case-sensitive.
-"""
-case_sensitive(::AbstractSpiceSimulator) = false  # SPICE is case-insensitive
-case_sensitive(::AbstractSpectreSimulator) = true  # Spectre is case-sensitive
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
 
 """
-    simulator_from_symbol(sym::Symbol) -> AbstractSimulator
-
-Convert a dialect symbol to a simulator type instance.
-This provides backward compatibility with the old symbol-based API.
-
-Supported symbols:
-- `:ngspice` → `Ngspice()`
-- `:hspice` → `Hspice()`
-- `:pspice` → `Pspice()`
-- `:xyce` → `Xyce()`
-- `:spectre` → `SpectreADE()`
-"""
-function simulator_from_symbol(sym::Symbol)
-    if sym === :ngspice
-        return Ngspice()
-    elseif sym === :hspice
-        return Hspice()
-    elseif sym === :pspice
-        return Pspice()
-    elseif sym === :xyce
-        return Xyce()
-    elseif sym === :spectre
-        return SpectreADE()
-    else
-        error("Unknown simulator dialect: $sym. Supported: :ngspice, :hspice, :pspice, :xyce, :spectre")
-    end
-end
-
-"""
     symbol_from_simulator(sim::AbstractSimulator) -> Symbol
 
-Convert a simulator type to a symbol.
-This provides backward compatibility with the old symbol-based API.
+Convert a simulator type instance to a symbol.
+Used for interfacing with parser code that expects symbol-based dialect specification.
 """
 symbol_from_simulator(::Ngspice) = :ngspice
 symbol_from_simulator(::Hspice) = :hspice
 symbol_from_simulator(::Pspice) = :pspice
 symbol_from_simulator(::Xyce) = :xyce
 symbol_from_simulator(::SpectreADE) = :spectre
+symbol_from_simulator(::OpenVAF) = :openvaf
+symbol_from_simulator(::Gnucap) = :gnucap
