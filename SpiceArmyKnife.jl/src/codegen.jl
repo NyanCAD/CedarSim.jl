@@ -102,19 +102,29 @@ formatting including trivia (whitespace, comments).
 For actual dialect conversion, you should specialize on specific node types
 and recurse into their children rather than using this fallback.
 
+Runtime validation ensures we don't accidentally output SPICE nodes with Spectre
+simulators or vice versa (type safety without type system ambiguities).
+
 WARNING: This fallback may prevent proper conversion and can cause issues with
 whitespace accumulation in roundtrip tests. Consider adding an explicit handler
 that recurses into the node's children.
 """
-function (scope::CodeGenScope)(node::SNode{T}) where T
+function (scope::CodeGenScope{Sim})(node::SNode{T}) where {Sim, T}
+    # Runtime type safety check: prevent cross-language contamination
+    if Sim <: AbstractSpiceSimulator && T <: SC.AbstractASTNode
+        error("Cannot generate Spectre node type $T with SPICE simulator $Sim. This indicates a bug - SPICE simulators should not receive Spectre AST nodes.")
+    elseif Sim <: AbstractSpectreSimulator && T <: SP.AbstractASTNode
+        error("Cannot generate SPICE node type $T with Spectre simulator $Sim. This indicates a bug - Spectre simulators should not receive SPICE AST nodes.")
+    elseif Sim <: AbstractVerilogASimulator
+        error("Using fullcontents() fallback for Verilog-A is not supported. Node type $T requires an explicit Verilog-A handler.")
+    end
+
     # Warn that we're using fullcontents fallback - indicates missing handler
-    # This won't be called for Terminals since they have explicit handlers
     if get(scope.options, :warn_fallback, true)
         @warn "Using fullcontents() fallback for node type $T. Consider adding an explicit handler." maxlog=1 _id=hash(T)
     end
 
     # Default: preserve original formatting with fullcontents
-    # This won't recurse into children - it's a literal copy
     print(scope.io, fullcontents(node))
 end
 
@@ -126,27 +136,15 @@ end
 # =============================================================================
 
 """
-Process top-level SPICE netlist source.
-"""
-function (scope::CodeGenScope)(n::SNode{SP.SPICENetlistSource})
-    for stmt in n.stmts
-        scope(stmt)
-    end
-end
+Process block statements and netlists - just recurse into statements.
+Handles all source and block nodes from both SPICE and Spectre.
 
+These handlers are untyped on the scope because:
+1. They only recurse into child statements - no simulator-specific logic
+2. Type safety is enforced at the leaf nodes (devices, models, etc.) and in the fallback
+3. More specific than the fallback (AbstractBlockASTNode vs AbstractASTNode)
 """
-Process top-level Spectre netlist source.
-"""
-function (scope::CodeGenScope)(n::SNode{SC.SpectreNetlistSource})
-    for stmt in n.stmts
-        scope(stmt)
-    end
-end
-
-"""
-Process block statements (subcircuits, lib sections, etc.)
-"""
-function (scope::CodeGenScope)(n::SNode{<:Union{SC.AbstractBlockASTNode, SP.AbstractBlockASTNode}})
+function (scope::CodeGenScope)(n::SNode{<:Union{SP.AbstractBlockASTNode, SC.AbstractBlockASTNode}})
     for stmt in n.stmts
         scope(stmt)
     end
@@ -227,7 +225,7 @@ end
 # Arrays
 # =============================================================================
 
-function (scope::CodeGenScope)(n::SNode{SC.SpectreArray})
+function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SC.SpectreArray})
     print(scope.io, "[")
     first_item = true
     for item in n.items
@@ -245,12 +243,12 @@ end
 # =============================================================================
 
 # SPICE NodeName: base node name (contains Identifier or NumberLiteral)
-function (scope::CodeGenScope)(n::SNode{SP.NodeName})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.NodeName})
     scope(n.name)  # name is Terminal (Identifier or NumberLiteral)
 end
 
 # SPICE HierarchialNode: node names with optional subnodes (e.g., "vdd", "n1", "foo.bar")
-function (scope::CodeGenScope)(n::SNode{SP.HierarchialNode})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.HierarchialNode})
     scope(n.base)
     for subnode in n.subnodes
         scope(subnode)
@@ -258,7 +256,7 @@ function (scope::CodeGenScope)(n::SNode{SP.HierarchialNode})
 end
 
 # Spectre SNode: node reference with optional subcircuit qualifiers
-function (scope::CodeGenScope)(n::SNode{SC.SNode})
+function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SC.SNode})
     for subckt in n.subckts
         scope(subckt)
     end
@@ -270,7 +268,7 @@ end
 # =============================================================================
 
 # SPICE Title: first line of SPICE file (optional .title keyword + comment line)
-function (scope::CodeGenScope)(n::SNode{SP.Title})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.Title})
     if n.dot !== nothing
         scope(n.dot)
     end
@@ -284,7 +282,7 @@ end
 
 # SPICE Brace: parameter value in braces {expr}
 # Contains expressions that may need modification for dialect conversion
-function (scope::CodeGenScope)(n::SNode{SP.Brace})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.Brace})
     print(scope.io, "{")
     scope(n.inner)
     print(scope.io, "}")
@@ -303,7 +301,7 @@ function (scope::CodeGenScope)(n::SNode{<:Union{SC.Parameter, SP.Parameter}})
 end
 
 # SPICE .param statement: .param name1=val1 name2=val2 ...
-function (scope::CodeGenScope)(n::SNode{SP.ParamStatement})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.ParamStatement})
     scope(n.dot)
     scope(n.kw)
     for param in n.params
@@ -317,21 +315,11 @@ end
 # Models
 # =============================================================================
 
-# SPICE .model name type param1=val1 param2=val2 ...
-function (scope::CodeGenScope)(n::SNode{SP.Model})
-    print(scope.io, ".model ")
-    scope(n.name)
-    print(scope.io, " ")
-    scope(n.typ)
-    for param in n.parameters
-        print(scope.io, " ")
-        scope(param)
-    end
-    println(scope.io)
-end
+# Note: SPICE .model has a trait-based handler below at line ~648 that handles
+# parameter filtering and conversion. No generic handler needed here.
 
 # Spectre: model name master_name param1=val1 param2=val2
-function (scope::CodeGenScope)(n::SNode{SC.Model})
+function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SC.Model})
     print(scope.io, "model ")
     scope(n.name)
     print(scope.io, " ")
@@ -348,7 +336,7 @@ end
 # =============================================================================
 
 # SPICE: .subckt name node1 node2 ... param1=val1 ...
-function (scope::CodeGenScope)(n::SNode{SP.Subckt})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.Subckt})
     print(scope.io, ".subckt ")
     scope(n.name)
     for node in n.subckt_nodes
@@ -376,7 +364,7 @@ function (scope::CodeGenScope)(n::SNode{SP.Subckt})
 end
 
 # Spectre: subckt name (node1 node2 ...)
-function (scope::CodeGenScope)(n::SNode{SC.Subckt})
+function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SC.Subckt})
     if n.inline !== nothing
         print(scope.io, "inline ")
     end
@@ -417,7 +405,7 @@ end
 # =============================================================================
 
 # SPICE MOSFET: Mname drain gate source bulk model param1=val1 ...
-function (scope::CodeGenScope)(n::SNode{SP.MOSFET})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.MOSFET})
     scope(n.name)
     print(scope.io, " ")
     scope(n.d)
@@ -437,7 +425,7 @@ function (scope::CodeGenScope)(n::SNode{SP.MOSFET})
 end
 
 # SPICE Resistor: Rname pos neg value/model param1=val1 ...
-function (scope::CodeGenScope)(n::SNode{SP.Resistor})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.Resistor})
     scope(n.name)
     print(scope.io, " ")
     scope(n.pos)
@@ -455,7 +443,7 @@ function (scope::CodeGenScope)(n::SNode{SP.Resistor})
 end
 
 # SPICE Capacitor: Cname pos neg value/model param1=val1 ...
-function (scope::CodeGenScope)(n::SNode{SP.Capacitor})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.Capacitor})
     scope(n.name)
     print(scope.io, " ")
     scope(n.pos)
@@ -473,7 +461,7 @@ function (scope::CodeGenScope)(n::SNode{SP.Capacitor})
 end
 
 # SPICE Inductor: Lname pos neg value/model param1=val1 ...
-function (scope::CodeGenScope)(n::SNode{SP.Inductor})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.Inductor})
     scope(n.name)
     print(scope.io, " ")
     scope(n.pos)
@@ -491,7 +479,7 @@ function (scope::CodeGenScope)(n::SNode{SP.Inductor})
 end
 
 # SPICE Diode: Dname pos neg model param1=val1 ...
-function (scope::CodeGenScope)(n::SNode{SP.Diode})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.Diode})
     scope(n.name)
     print(scope.io, " ")
     scope(n.pos)
@@ -507,7 +495,7 @@ function (scope::CodeGenScope)(n::SNode{SP.Diode})
 end
 
 # SPICE Voltage source: Vname pos neg type value param1=val1 ...
-function (scope::CodeGenScope)(n::SNode{SP.Voltage})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.Voltage})
     scope(n.name)
     print(scope.io, " ")
     scope(n.pos)
@@ -525,7 +513,7 @@ function (scope::CodeGenScope)(n::SNode{SP.Voltage})
 end
 
 # SPICE Current source: Iname pos neg type value param1=val1 ...
-function (scope::CodeGenScope)(n::SNode{SP.Current})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.Current})
     scope(n.name)
     print(scope.io, " ")
     scope(n.pos)
@@ -543,7 +531,7 @@ function (scope::CodeGenScope)(n::SNode{SP.Current})
 end
 
 # SPICE Subcircuit call: Xname node1 node2 ... subckt_name param1=val1 ...
-function (scope::CodeGenScope)(n::SNode{SP.SubcktCall})
+function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.SubcktCall})
     scope(n.name)
     for node in n.nodes
         print(scope.io, " ")
@@ -563,7 +551,7 @@ end
 # =============================================================================
 
 # Spectre Instance: name (node1 node2 ...) master param1=val1 ...
-function (scope::CodeGenScope)(n::SNode{SC.Instance})
+function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SC.Instance})
     scope(n.name)
     print(scope.io, " (")
 
