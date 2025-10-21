@@ -34,6 +34,8 @@ Fields:
 - `io`: Output IO buffer
 - `indent`: Current indentation level (for readability)
 - `options`: Dict for simulator-specific options
+- `params`: Set of parameter names declared in current scope (for Verilog-A backtick resolution)
+- `parent_scope`: Parent scope for hierarchical parameter lookup (nothing = global scope)
 
 The parametric type allows method specialization for different simulators:
 ```julia
@@ -49,16 +51,71 @@ struct CodeGenScope{Sim <: AbstractSimulator}
     io::IO
     indent::Int
     options::Dict{Symbol, Any}
+    params::Set{Symbol}
+    parent_scope::Union{Nothing, CodeGenScope{Sim}}
 end
 
-# Constructor with default options
-function CodeGenScope{Sim}(io::IO, indent::Int=0) where {Sim <: AbstractSimulator}
-    CodeGenScope{Sim}(io, indent, Dict{Symbol, Any}())
+# Constructor with optional indent and options (creates global scope with no parent)
+function CodeGenScope{Sim}(io::IO, indent::Int=0, options::Dict{Symbol, Any}=Dict{Symbol, Any}()) where {Sim <: AbstractSimulator}
+    CodeGenScope{Sim}(io, indent, options, Set{Symbol}(), nothing)
 end
 
-# Helper to create new scope with modified indent
+# Helper to create new scope with modified indent (preserves params and parent)
 with_indent(scope::CodeGenScope{Sim}, delta::Int) where {Sim <: AbstractSimulator} =
-    CodeGenScope{Sim}(scope.io, scope.indent + delta, scope.options)
+    CodeGenScope{Sim}(scope.io, scope.indent + delta, scope.options, scope.params, scope.parent_scope)
+
+"""
+    is_global_scope(scope::CodeGenScope) -> Bool
+
+Check if this is the global (top-level) scope.
+Global scope has no parent and is used for top-level .param → `define conversion.
+"""
+is_global_scope(scope::CodeGenScope) = scope.parent_scope === nothing
+
+"""
+    create_child_scope(scope::CodeGenScope{Sim}) -> CodeGenScope{Sim}
+
+Create a child scope for a module/subcircuit.
+Preserves IO and options but creates new empty params set with parent link.
+"""
+function create_child_scope(scope::CodeGenScope{Sim}) where {Sim <: AbstractSimulator}
+    CodeGenScope{Sim}(scope.io, scope.indent, scope.options, Set{Symbol}(), scope)
+end
+
+"""
+    add_param(scope::CodeGenScope, name::Symbol)
+
+Add a parameter name to the current scope's parameter set.
+Used to track which identifiers are parameters for backtick resolution.
+"""
+function add_param(scope::CodeGenScope, name::Symbol)
+    push!(scope.params, name)
+end
+
+"""
+    needs_backtick(scope::CodeGenScope, identifier::Symbol) -> Bool
+
+Determine if an identifier needs a backtick prefix for Verilog-A output.
+
+Recursively checks current scope and all parent scopes:
+- If found in any scope → false (module parameter, use bare identifier)
+- If not found in any scope → true (global `define, needs backtick prefix)
+"""
+function needs_backtick(scope::CodeGenScope, identifier::Symbol)
+    # Check current scope
+    if identifier ∈ scope.params
+        return false  # Local parameter, use bare identifier
+    end
+
+    # Check parent scopes recursively
+    if scope.parent_scope !== nothing
+        return needs_backtick(scope.parent_scope, identifier)
+    end
+
+    # Not found in any scope - must be a global `define or undefined
+    # We assume it's a global define and needs backtick
+    return true
+end
 
 """
     write_indent(scope::CodeGenScope)
@@ -882,6 +939,96 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Title}) where {Sim <: AbstractVe
     nothing
 end
 
+# Verilog-A handler for SPICE .lib blocks
+# Converts to `ifdef ... `endif conditional compilation
+function (scope::CodeGenScope{Sim})(n::SNode{SP.LibStatement}) where {Sim <: AbstractVerilogASimulator}
+    lib_name = String(n.name)
+
+    # Emit `ifdef directive
+    println(scope.io, "`ifdef ", lib_name)
+
+    # Process body statements
+    for stmt in n.stmts
+        scope(stmt)
+    end
+
+    # Emit `endif
+    println(scope.io, "`endif")
+    println(scope.io)  # Extra blank line after lib block
+end
+
+# Verilog-A handler for SPICE .include statements
+# Converts to `include directives with quoted paths
+function (scope::CodeGenScope{Sim})(n::SNode{SP.IncludeStatement}) where {Sim <: AbstractVerilogASimulator}
+    # Strip outer quotes from path (preserves escape sequences)
+    path_str = strip(String(n.path), ['"', '\''])
+    println(scope.io, "`include \"", path_str, "\"")
+end
+
+# Verilog-A handler for SPICE .param statements
+# Top-level: converts to `define macros (global scope)
+# Module-level: converts to parameter declarations (scoped to module)
+function (scope::CodeGenScope{Sim})(n::SNode{SP.ParamStatement}) where {Sim <: AbstractVerilogASimulator}
+    for param in n.params
+        param_name_str = String(param.name)
+        param_name_sym = Symbol(lowercase(param_name_str))
+
+        # Track parameter in current scope
+        add_param(scope, param_name_sym)
+
+        if is_global_scope(scope)
+            # Top-level: emit `define macro
+            print(scope.io, "`define ", param_name_str, " ")
+            if param.val !== nothing
+                scope(param.val)
+            else
+                # Parameter without value - default to 1
+                print(scope.io, "1")
+            end
+            println(scope.io)
+        else
+            # Module-level: emit parameter declaration
+            write_indent(scope)
+            print(scope.io, "parameter real ", param_name_str, " = ")
+            if param.val !== nothing
+                scope(param.val)
+            else
+                # Parameter without value - default to 0
+                print(scope.io, "0")
+            end
+            println(scope.io, ";")
+        end
+    end
+end
+
+# Verilog-A handler for SPICE Identifier - add backtick for global `define references
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Identifier}) where {Sim <: AbstractVerilogASimulator}
+    identifier_str = String(n)
+    identifier_sym = Symbol(lowercase(identifier_str))
+
+    if needs_backtick(scope, identifier_sym)
+        # Global parameter - needs backtick prefix
+        print(scope.io, "`", identifier_str)
+    else
+        # Module parameter - use bare identifier
+        print(scope.io, identifier_str)
+    end
+end
+
+# Verilog-A handler for Spectre Identifier - add backtick for global `define references
+function (scope::CodeGenScope{Sim})(n::SNode{SC.Identifier}) where {Sim <: AbstractVerilogASimulator}
+    identifier_str = String(n)
+    identifier_sym = Symbol(lowercase(identifier_str))
+
+    if needs_backtick(scope, identifier_sym)
+        # Global parameter - needs backtick prefix
+        print(scope.io, "`", identifier_str)
+    else
+        # Module parameter - use bare identifier
+        print(scope.io, identifier_str)
+    end
+end
+
 # Verilog-A handler for SPICE Model
 # Generates two `define macros: one for the device type, one for parameters
 # Prefixes identifiers with 'model_' to avoid naming conflicts (SPICE allows model names starting with digits)
@@ -921,11 +1068,19 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractVe
 end
 
 # Verilog-A handler for SPICE Subcircuit
-# Generates Verilog-A module with electrical ports
+# Generates Verilog-A module with electrical ports and parameter declarations
 function (scope::CodeGenScope{Sim})(n::SNode{SP.Subckt}) where {Sim <: AbstractVerilogASimulator}
-    # Skip leading trivia (comments) for Verilog-A
-
     subckt_name = String(n.name)
+
+    # Create child scope for this module
+    child_scope = create_child_scope(scope)
+
+    # Add subcircuit header parameters to child scope
+    for par in n.parameters
+        param_name_str = String(par.name)
+        param_name_sym = Symbol(lowercase(param_name_str))
+        add_param(child_scope, param_name_sym)
+    end
 
     # Module header: module <name>(<ports>);
     print(scope.io, "module ", subckt_name, "(")
@@ -947,10 +1102,25 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Subckt}) where {Sim <: AbstractV
     print(scope.io, "  electrical ")
     println(scope.io, join(port_names, ", "), ";")
 
+    # Parameter declarations from subcircuit header
+    if !isempty(n.parameters)
+        println(scope.io)
+        for par in n.parameters
+            param_name_str = String(par.name)
+            print(scope.io, "  parameter real ", param_name_str, " = ")
+            if par.val !== nothing
+                child_scope(par.val)
+            else
+                print(scope.io, "0")
+            end
+            println(scope.io, ";")
+        end
+    end
+
     println(scope.io)
 
-    # Body statements (with increased indent)
-    inner_scope = with_indent(scope, 1)
+    # Body statements (with child scope and increased indent)
+    inner_scope = with_indent(child_scope, 1)
     for stmt in n.stmts
         inner_scope(stmt)
     end
