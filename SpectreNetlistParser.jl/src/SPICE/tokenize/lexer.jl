@@ -26,7 +26,7 @@ function is_identifier_start_char(c::Char)
     return isletter(c) || c == '_'
 end
 
-is_instance_first_char(c) = c in ('B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X')
+is_instance_first_char(c) = c in ('B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X')
 
 @inline ishex(c::Char) = isdigit(c) || ('a' <= c <= 'f') || ('A' <= c <= 'F')
 @inline isbinary(c::Char) = c == '0' || c == '1'

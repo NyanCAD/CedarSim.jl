@@ -864,7 +864,7 @@ function parse_instance(ps)
         IDENTIFIER_LINEAR_MUTUAL_INDUCTOR     => unimplemented_instance_error(ps) # TODO
         IDENTIFIER_LINEAR_INDUCTOR            => parse_inductor(ps)
         IDENTIFIER_MOSFET                     => parse_mosfet(ps)
-        IDENTIFIER_OSDI                       => unimplemented_instance_error(ps)
+        IDENTIFIER_OSDI                       => parse_subckt_call(ps, OSDIDEvice) # kinda a subckt call
         IDENTIFIER_PORT                       => unimplemented_instance_error(ps) # TODO
         IDENTIFIER_BIPOLAR_TRANSISTOR         => parse_bipolar_transistor(ps)
         IDENTIFIER_RESISTOR                   => parse_resistor(ps)
@@ -1108,8 +1108,8 @@ function parse_mosfet(ps)
     return EXPR(MOSFET(name, d, g, s, b, model, parameters, nl))
 end
 
-function parse_subckt_call(ps)
-    @trysetup SubcktCall
+function parse_subckt_call(ps, type=SubcktCall)
+    @trysetup type
     @trynext name = parse_hierarchial_node(ps)
     nodes = EXPRList{HierarchialNode}()
     while kind(nnt(ps)) !== EQ && kind(nt(ps)) !== NEWLINE && kind(nt(ps)) !== JULIA_ESCAPE_BEGIN
@@ -1122,7 +1122,7 @@ function parse_subckt_call(ps)
     model = pop!(nodes)
     @trynext parameters = parse_parameter_list(ps)
     @trynext nl = accept_newline(ps)
-    return EXPR(SubcktCall(name, nodes, model, parameters, nl))
+    return EXPR(type(name, nodes, model, parameters, nl))
 end
 
 function parse_s_parameter_element(ps)

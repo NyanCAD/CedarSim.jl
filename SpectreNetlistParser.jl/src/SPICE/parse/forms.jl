@@ -440,6 +440,14 @@ struct JuliaDevice <: AbstractInstanceNode
     nl::EXPR{Notation}
 end
 
+struct OSDIDEvice <: AbstractInstanceNode
+    name::EXPR{HierarchialNode}
+    nodes::EXPRList{HierarchialNode}
+    model::EXPR{HierarchialNode}
+    parameters::EXPRList{Parameter}
+    nl::EXPR{Notation}
+end
+
 struct SubcktCall <: AbstractInstanceNode
     name::EXPR{HierarchialNode}
     # TODO: Probably not right:

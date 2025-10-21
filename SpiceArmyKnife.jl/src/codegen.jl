@@ -212,11 +212,22 @@ end
 # =============================================================================
 
 # Terminals use String(node) to get semantic content without trivia
-function (scope::CodeGenScope)(n::SNode{<:SP.Terminal})
+# Terminal handlers - only for same-language conversions (SPICE→SPICE, Spectre→Spectre)
+# For cross-language conversions (→Verilog-A), we need explicit handlers for each terminal type
+function (scope::CodeGenScope{Sim})(n::SNode{<:SP.Terminal}) where {Sim <: AbstractSpiceSimulator}
     print(scope.io, String(n))
 end
 
-function (scope::CodeGenScope)(n::SNode{<:SC.Terminal})
+function (scope::CodeGenScope{Sim})(n::SNode{<:SC.Terminal}) where {Sim <: AbstractSpectreSimulator}
+    print(scope.io, String(n))
+end
+
+# Verilog-A terminal handlers - explicit support for common terminals
+function (scope::CodeGenScope{Sim})(n::SNode{<:Union{SP.Operator, SC.Operator}}) where {Sim <: AbstractVerilogASimulator}
+    print(scope.io, String(n))
+end
+
+function (scope::CodeGenScope{Sim})(n::SNode{<:Union{SP.StringLiteral, SC.StringLiteral}}) where {Sim <: AbstractVerilogASimulator}
     print(scope.io, String(n))
 end
 
@@ -958,10 +969,14 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.LibStatement}) where {Sim <: Abs
 end
 
 # Verilog-A handler for SPICE .include statements
-# Converts to `include directives with quoted paths
+# Converts to `include directives with quoted paths, changing extension to .va
 function (scope::CodeGenScope{Sim})(n::SNode{SP.IncludeStatement}) where {Sim <: AbstractVerilogASimulator}
     # Strip outer quotes from path (preserves escape sequences)
     path_str = strip(String(n.path), ['"', '\''])
+
+    # Replace extension with .va
+    path_str = splitext(path_str)[1] * ".va"
+
     println(scope.io, "`include \"", path_str, "\"")
 end
 
@@ -1130,6 +1145,59 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Subckt}) where {Sim <: AbstractV
     println(scope.io)  # Extra blank line after module
 end
 
+# Verilog-A handler for SPICE expression wrappers - convert {expr} and 'expr' to (expr)
+function (scope::CodeGenScope{Sim})(n::SNode{<:Union{SP.Brace, SP.Prime}}) where {Sim <: AbstractVerilogASimulator}
+    print(scope.io, "(")
+    scope(n.inner)
+    print(scope.io, ")")
+end
+
+# Verilog-A handler for SPICE condition expressions
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Condition}) where {Sim <: AbstractVerilogASimulator}
+    print(scope.io, "(")
+    scope(n.body)
+    print(scope.io, ")")
+end
+
+# Verilog-A handler for SPICE .if/.else/.endif blocks
+function (scope::CodeGenScope{Sim})(n::SNode{SP.IfBlock}) where {Sim <: AbstractVerilogASimulator}
+    write_indent(scope)
+    println(scope.io, "generate")
+
+    inner_scope = with_indent(scope, 1)
+
+    for (i, case_node) in enumerate(n.cases)
+        if i == 1
+            # First case - must be .if with condition
+            write_indent(inner_scope)
+            print(scope.io, "if ")
+            scope(case_node.condition)
+            println(scope.io, " begin")
+        elseif case_node.condition !== nothing
+            # Subsequent case with condition - .elseif
+            write_indent(inner_scope)
+            print(scope.io, "end else if ")
+            scope(case_node.condition)
+            println(scope.io, " begin")
+        else
+            # Case without condition - .else
+            write_indent(inner_scope)
+            println(scope.io, "end else begin")
+        end
+
+        # Process statements in this case
+        case_inner_scope = with_indent(inner_scope, 1)
+        for stmt in case_node.stmts
+            case_inner_scope(stmt)
+        end
+    end
+
+    write_indent(inner_scope)
+    println(scope.io, "end")
+    write_indent(scope)
+    println(scope.io, "endgenerate")
+end
+
 # Verilog-A handler for SPICE Resistor
 function (scope::CodeGenScope{Sim})(n::SNode{SP.Resistor}) where {Sim <: AbstractVerilogASimulator}
     write_indent(scope)
@@ -1232,15 +1300,31 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.SubcktCall}) where {Sim <: Abstr
         push!(node_names, String(node))
     end
 
-    # <subckt_name> <inst_name>(<nodes>);
-    print(scope.io, subckt_name, " ", inst_name, "(")
+    # <subckt_name> #(.param1(value1), ...) <inst_name>(<nodes>);
+    print(scope.io, subckt_name)
+
+    # Add parameter overrides if present
+    if !isempty(n.parameters)
+        print(scope.io, " #(")
+        first_param = true
+        for param in n.parameters
+            if !first_param
+                print(scope.io, ", ")
+            end
+            param_name = lowercase(String(param.name))
+            print(scope.io, ".", param_name, "(")
+            if param.val !== nothing
+                scope(param.val)
+            end
+            print(scope.io, ")")
+            first_param = false
+        end
+        print(scope.io, ")")
+    end
+
+    print(scope.io, " ", inst_name, "(")
     print(scope.io, join(node_names, ", "))
     print(scope.io, ");")
-
-    # TODO: Handle parameters if needed
-    # if !isempty(n.parameters)
-    #     # Add parameter overrides
-    # end
 
     println(scope.io)
 end
