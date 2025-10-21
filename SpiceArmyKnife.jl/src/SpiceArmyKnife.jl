@@ -206,14 +206,14 @@ function extract_definitions(ast, config::ExtractionConfig, models::Vector{Any},
             # Handle .include statements
             str = strip(String(stmt.path), ['"', '\''])
             try
-                _, path = resolve_includepath(str, config.includepaths)
+                path = resolve_includepath(str, config.includepaths)
                 sa = get!(() -> SpectreNetlistParser.parsefile(path; implicit_title=false), config.parsed_files, path)
                 new_includepaths = [dirname(path), config.includepaths...]
                 extract_definitions(sa, deeper(config; new_includepaths, new_file=path), models, subcircuits, error_stats, failed_files)
             catch e
                 error_type = string(typeof(e))
                 error_stats[error_type] = get(error_stats, error_type, 0) + 1
-                push!(failed_files, path)
+                push!(failed_files, str)
                 print("Warning: Could not process include $str: ")
                 showerror(stdout, e)
                 println()
@@ -223,7 +223,7 @@ function extract_definitions(ast, config::ExtractionConfig, models::Vector{Any},
             str = strip(String(stmt.path), ['"', '\''])
             section = String(stmt.name)
             try
-                _, path = resolve_includepath(str, config.includepaths)
+                path = resolve_includepath(str, config.includepaths)
                 lib_key = (path, section)
                 if lib_key ∉ config.libraries
                     push!(config.libraries, lib_key)
@@ -239,7 +239,7 @@ function extract_definitions(ast, config::ExtractionConfig, models::Vector{Any},
             catch e
                 error_type = string(typeof(e))
                 error_stats[error_type] = get(error_stats, error_type, 0) + 1
-                push!(failed_files, path)
+                push!(failed_files, str)
                 print("Warning: Could not process lib include $str section $section: ")
                 showerror(stdout, e)
                 println()
@@ -317,16 +317,20 @@ function extract_subckt_params!(subckt, params)
 end
 
 """
-    resolve_includepath(path, includepaths) -> (ispdk, fullpath)
+    resolve_includepath(path, includepaths) -> fullpath
 
-Resolve an include path by searching in includepaths. 
-Returns (false, fullpath) when found.
+Resolve an include path by searching in includepaths.
+Returns the full path to the file if found, or errors if not found.
+
+Search order:
+1. Check if path exists as-is (absolute or relative to cwd)
+2. Search through each directory in includepaths
 """
 function resolve_includepath(path, includepaths)
-    isfile(path) && return false, path
+    isfile(path) && return path
     for base in includepaths
         fullpath = joinpath(base, path)
-        isfile(fullpath) && return false, fullpath
+        isfile(fullpath) && return fullpath
     end
     error("include path $path not found in $includepaths")
 end

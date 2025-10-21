@@ -142,12 +142,15 @@ function main()
 
         # Generate output
         println("Generating output code...")
-        output_code = generate_code(ast, output_sim)
+        # Set up includepaths with input file's directory for resolving relative includes
+        includepaths = [dirname(abspath(input_file))]
 
-        # Write output file
+        # Write output file - use file IO directly to enable separate include file generation
         println("Writing output file...")
+        output_dir = dirname(abspath(output_file))
+        options = Dict{Symbol, Any}(:output_dir => output_dir)
         open(output_file, "w") do io
-            write(io, output_code)
+            generate_code(ast, io, output_sim; options=options, includepaths=includepaths)
         end
 
         file_size_kb = round(stat(output_file).size / 1024, digits=1)

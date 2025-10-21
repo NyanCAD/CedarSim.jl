@@ -864,7 +864,7 @@ function parse_instance(ps)
         IDENTIFIER_LINEAR_MUTUAL_INDUCTOR     => unimplemented_instance_error(ps) # TODO
         IDENTIFIER_LINEAR_INDUCTOR            => parse_inductor(ps)
         IDENTIFIER_MOSFET                     => parse_mosfet(ps)
-        IDENTIFIER_OSDI                       => parse_subckt_call(ps, OSDIDEvice) # kinda a subckt call
+        IDENTIFIER_OSDI                       => parse_subckt_call(ps, OSDIDevice) # kinda a subckt call
         IDENTIFIER_PORT                       => unimplemented_instance_error(ps) # TODO
         IDENTIFIER_BIPOLAR_TRANSISTOR         => parse_bipolar_transistor(ps)
         IDENTIFIER_RESISTOR                   => parse_resistor(ps)

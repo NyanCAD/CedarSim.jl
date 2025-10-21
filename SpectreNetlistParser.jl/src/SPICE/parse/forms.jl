@@ -440,7 +440,7 @@ struct JuliaDevice <: AbstractInstanceNode
     nl::EXPR{Notation}
 end
 
-struct OSDIDEvice <: AbstractInstanceNode
+struct OSDIDevice <: AbstractInstanceNode
     name::EXPR{HierarchialNode}
     nodes::EXPRList{HierarchialNode}
     model::EXPR{HierarchialNode}

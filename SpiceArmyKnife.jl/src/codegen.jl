@@ -36,6 +36,8 @@ Fields:
 - `options`: Dict for simulator-specific options
 - `params`: Set of parameter names declared in current scope (for Verilog-A backtick resolution)
 - `parent_scope`: Parent scope for hierarchical parameter lookup (nothing = global scope)
+- `includepaths`: Vector of directories to search for include files (Verilog-A conversion)
+- `processed_includes`: Cache mapping filename → local scope params (Verilog-A conversion)
 
 The parametric type allows method specialization for different simulators:
 ```julia
@@ -53,16 +55,20 @@ struct CodeGenScope{Sim <: AbstractSimulator}
     options::Dict{Symbol, Any}
     params::Set{Symbol}
     parent_scope::Union{Nothing, CodeGenScope{Sim}}
+    includepaths::Vector{String}
+    processed_includes::Dict{String, Set{Symbol}}
 end
 
 # Constructor with optional indent and options (creates global scope with no parent)
-function CodeGenScope{Sim}(io::IO, indent::Int=0, options::Dict{Symbol, Any}=Dict{Symbol, Any}()) where {Sim <: AbstractSimulator}
-    CodeGenScope{Sim}(io, indent, options, Set{Symbol}(), nothing)
+function CodeGenScope{Sim}(io::IO, indent::Int=0, options::Dict{Symbol, Any}=Dict{Symbol, Any}(),
+                           includepaths::Vector{String}=String[]) where {Sim <: AbstractSimulator}
+    CodeGenScope{Sim}(io, indent, options, Set{Symbol}(), nothing, includepaths, Dict{String, Set{Symbol}}())
 end
 
-# Helper to create new scope with modified indent (preserves params and parent)
+# Helper to create new scope with modified indent (preserves params, parent, includepaths, and cache)
 with_indent(scope::CodeGenScope{Sim}, delta::Int) where {Sim <: AbstractSimulator} =
-    CodeGenScope{Sim}(scope.io, scope.indent + delta, scope.options, scope.params, scope.parent_scope)
+    CodeGenScope{Sim}(scope.io, scope.indent + delta, scope.options, scope.params, scope.parent_scope,
+                      scope.includepaths, scope.processed_includes)
 
 """
     is_global_scope(scope::CodeGenScope) -> Bool
@@ -76,10 +82,11 @@ is_global_scope(scope::CodeGenScope) = scope.parent_scope === nothing
     create_child_scope(scope::CodeGenScope{Sim}) -> CodeGenScope{Sim}
 
 Create a child scope for a module/subcircuit.
-Preserves IO and options but creates new empty params set with parent link.
+Preserves IO, options, includepaths, and cache but creates new empty params set with parent link.
 """
 function create_child_scope(scope::CodeGenScope{Sim}) where {Sim <: AbstractSimulator}
-    CodeGenScope{Sim}(scope.io, scope.indent, scope.options, Set{Symbol}(), scope)
+    CodeGenScope{Sim}(scope.io, scope.indent, scope.options, Set{Symbol}(), scope,
+                      scope.includepaths, scope.processed_includes)
 end
 
 """
@@ -97,24 +104,26 @@ end
 
 Determine if an identifier needs a backtick prefix for Verilog-A output.
 
-Recursively checks current scope and all parent scopes:
-- If found in any scope → false (module parameter, use bare identifier)
-- If not found in any scope → true (global `define, needs backtick prefix)
+At global scope (parent_scope === nothing):
+- All identifiers need backtick prefix (referencing global `defines)
+
+Inside modules:
+- If found in current scope params → false (module parameter, use bare identifier)
+- If not found → recurse to parent scope → true (global `define, needs backtick prefix)
 """
 function needs_backtick(scope::CodeGenScope, identifier::Symbol)
+    # At global scope, all identifiers need backtick prefix
+    if scope.parent_scope === nothing
+        return true
+    end
+
     # Check current scope
     if identifier ∈ scope.params
         return false  # Local parameter, use bare identifier
     end
 
-    # Check parent scopes recursively
-    if scope.parent_scope !== nothing
-        return needs_backtick(scope.parent_scope, identifier)
-    end
-
-    # Not found in any scope - must be a global `define or undefined
-    # We assume it's a global define and needs backtick
-    return true
+    # Not in current scope - check parent scopes recursively
+    return needs_backtick(scope.parent_scope, identifier)
 end
 
 """
@@ -144,6 +153,14 @@ write_terminal(scope::CodeGenScope, ::Nothing) = nothing
 Write a newline to output.
 """
 newline(scope::CodeGenScope) = println(scope.io)
+
+"""
+    should_format_multiline(items) -> Bool
+
+Determine if a list should be formatted with each item on its own line.
+Returns true if the list has more than 5 items.
+"""
+should_format_multiline(items) = length(items) > 5
 
 # =============================================================================
 # Default Implementation - Preserve Original Formatting
@@ -763,7 +780,7 @@ end
 # =============================================================================
 
 """
-    generate_code(ast::SNode, simulator::AbstractSimulator; options::Dict=Dict()) -> String
+    generate_code(ast::SNode, simulator::AbstractSimulator; options::Dict=Dict(), includepaths::Vector{String}=String[]) -> String
 
 Generate SPICE/Spectre code from parsed AST for a specific simulator.
 
@@ -771,6 +788,7 @@ Arguments:
 - `ast`: Parsed netlist AST (from SpectreNetlistParser)
 - `simulator`: Target simulator instance (Ngspice(), Hspice(), Pspice(), Xyce(), SpectreADE())
 - `options`: Optional simulator-specific options
+- `includepaths`: Directories to search for include files (required for Verilog-A conversion with includes)
 
 Returns:
 - Generated code as String
@@ -787,9 +805,12 @@ ast = SpectreNetlistParser.parsefile("input.sp")
 ngspice_code = generate_code(ast, Ngspice())
 hspice_code = generate_code(ast, Hspice())
 spectre_code = generate_code(ast, SpectreADE())
+
+# Verilog-A conversion with include processing
+va_code = generate_code(ast, OpenVAF(), includepaths=["/path/to/models", "."])
 ```
 """
-function generate_code(ast::SNode, simulator::AbstractSimulator; options::Dict=Dict{Symbol, Any}())
+function generate_code(ast::SNode, simulator::AbstractSimulator; options::Dict=Dict{Symbol, Any}(), includepaths::Vector{String}=String[])
     # Check for parse errors and warn user
     if ast.ps.errored
         @warn "AST contains parse errors. Error lines will not be reformatted."
@@ -797,13 +818,13 @@ function generate_code(ast::SNode, simulator::AbstractSimulator; options::Dict=D
     end
 
     io = IOBuffer()
-    scope = CodeGenScope{typeof(simulator)}(io, 0, options)
+    scope = CodeGenScope{typeof(simulator)}(io, 0, options, includepaths)
     scope(ast)
     return String(take!(io))
 end
 
 """
-    generate_code(ast::SNode, io::IO, simulator::AbstractSimulator; options::Dict=Dict())
+    generate_code(ast::SNode, io::IO, simulator::AbstractSimulator; options::Dict=Dict(), includepaths::Vector{String}=String[])
 
 Generate SPICE/Spectre code to an IO stream for a specific simulator.
 
@@ -812,6 +833,7 @@ Arguments:
 - `io`: Output IO stream
 - `simulator`: Target simulator instance
 - `options`: Optional simulator-specific options
+- `includepaths`: Directories to search for include files (required for Verilog-A conversion with includes)
 
 Note: If the AST contains parse errors, a warning will be printed. Error lines will
 be preserved as-is without reformatting.
@@ -821,16 +843,21 @@ Example:
 open("output.sp", "w") do io
     generate_code(ast, io, Ngspice())
 end
+
+# Verilog-A with include processing
+open("output.va", "w") do io
+    generate_code(ast, io, OpenVAF(), includepaths=["/path/to/models", "."])
+end
 ```
 """
-function generate_code(ast::SNode, io::IO, simulator::AbstractSimulator; options::Dict=Dict{Symbol, Any}())
+function generate_code(ast::SNode, io::IO, simulator::AbstractSimulator; options::Dict=Dict{Symbol, Any}(), includepaths::Vector{String}=String[])
     # Check for parse errors and warn user
     if ast.ps.errored
         @warn "AST contains parse errors. Error lines will not be reformatted."
         visit_errors(ast; io=stderr)
     end
 
-    scope = CodeGenScope{typeof(simulator)}(io, 0, options)
+    scope = CodeGenScope{typeof(simulator)}(io, 0, options, includepaths)
     scope(ast)
 end
 
@@ -969,15 +996,71 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.LibStatement}) where {Sim <: Abs
 end
 
 # Verilog-A handler for SPICE .include statements
-# Converts to `include directives with quoted paths, changing extension to .va
+# Recursively processes included files with inherited scope
+# - If output is a file: writes to separate .va file in same directory, emits `include directive
+# - If output is memory (IOBuffer): inlines the content directly, no `include directive
 function (scope::CodeGenScope{Sim})(n::SNode{SP.IncludeStatement}) where {Sim <: AbstractVerilogASimulator}
     # Strip outer quotes from path (preserves escape sequences)
     path_str = strip(String(n.path), ['"', '\''])
 
-    # Replace extension with .va
-    path_str = splitext(path_str)[1] * ".va"
+    # Compute output path with .va extension (preserve relative directory structure)
+    output_relpath = splitext(path_str)[1] * ".va"
 
-    println(scope.io, "`include \"", path_str, "\"")
+    # Resolve the full path to the include file
+    fullpath = resolve_includepath(path_str, scope.includepaths)
+
+    # Check if already processed
+    if haskey(scope.processed_includes, fullpath)
+        # Validate scope matches
+        cached_params = scope.processed_includes[fullpath]
+        if cached_params != scope.params
+            @warn "Include file $fullpath included from contexts with different scopes" cached_scope=cached_params current_scope=scope.params
+        end
+    else
+        # Not yet processed - parse and convert recursively
+        try
+            inc_ast = SP.parsefile(fullpath; implicit_title=false)
+
+            if inc_ast.ps.errored
+                @warn "Parse errors in included file: $fullpath"
+                visit_errors(inc_ast; io=stderr)
+            end
+
+            # Determine if we're writing to a file or memory
+            if scope.io isa IOStream
+                # Writing to file - create separate .va file, mirroring directory structure
+                output_dir = get(scope.options, :output_dir, ".")
+                output_path = joinpath(output_dir, output_relpath)
+
+                # Create directory structure if needed (equivalent to mkdir -p)
+                mkpath(dirname(output_path))
+
+                # Create new scope for included file with file IO
+                # Prepend directory of included file so nested includes resolve relative to it
+                inc_includepaths = [dirname(fullpath), scope.includepaths...]
+                open(output_path, "w") do inc_io
+                    inc_scope = CodeGenScope{Sim}(inc_io, 0, scope.options, scope.params, scope.parent_scope,
+                                                  inc_includepaths, scope.processed_includes)
+                    inc_scope(inc_ast)
+                end
+            else
+                # Writing to memory (IOBuffer) - inline the content directly
+                scope(inc_ast)
+            end
+
+            # Cache the scope parameters for this file
+            scope.processed_includes[fullpath] = copy(scope.params)
+        catch e
+            @warn "Failed to process include file: $fullpath" exception=(e, catch_backtrace())
+            # Continue with main conversion despite include failure
+        end
+    end
+
+    # Emit `include directive only if writing to file (mirrors file structure)
+    if scope.io isa IOStream
+        println(scope.io, "`include \"", output_relpath, "\"")
+    end
+    # If IOBuffer: content already inlined, no directive needed
 end
 
 # Verilog-A handler for SPICE .param statements
@@ -1061,10 +1144,20 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractVe
     # Generate params macro: `define model_<name>_params .PARAM1(val1), .PARAM2(val2), ...
     print(scope.io, "`define ", model_name, "_params ")
 
+    multiline = should_format_multiline(n.parameters)
     first_param = true
     for param in n.parameters
         if !first_param
             print(scope.io, ", ")
+        end
+
+        if multiline
+            # Each parameter on its own line for readability
+            # Need backslash continuation for `define directives
+            if !first_param
+                println(scope.io, "\\")
+                print(scope.io, "  ")  # Indent continuation
+            end
         end
 
         param_name = lowercase(String(param.name))
@@ -1287,6 +1380,65 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVe
     println(scope.io)
 end
 
+# Verilog-A handler for SPICE OSDI Device (N prefix - OpenVAF/OSDI models)
+# Uses model macro convention like Diode but with variable nodes like SubcktCall
+function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: AbstractVerilogASimulator}
+    write_indent(scope)
+
+    inst_name = String(n.name)
+    model_name_orig = String(n.model)
+    model_name = "model_" * lowercase(model_name_orig)
+
+    # Collect node names
+    node_names = String[]
+    for node in n.nodes
+        push!(node_names, String(node))
+    end
+
+    # `model_<name>_type #(`model_<name>_params, .param1(val1), ...) <name> (nodes...);
+    multiline = should_format_multiline(n.parameters)
+
+    print(scope.io, "`", model_name, "_type #(")
+    if multiline
+        println(scope.io)
+        write_indent(scope)
+        print(scope.io, "  `", model_name, "_params")
+    else
+        print(scope.io, "`", model_name, "_params")
+    end
+
+    # Add instance parameters if present
+    if !isempty(n.parameters)
+        for param in n.parameters
+            print(scope.io, ",")
+
+            if multiline
+                println(scope.io)
+                write_indent(scope)
+                print(scope.io, "  ")  # Indent parameters
+            else
+                print(scope.io, " ")
+            end
+
+            param_name = lowercase(String(param.name))
+            print(scope.io, ".", param_name, "(")
+
+            if param.val !== nothing
+                scope(param.val)
+            end
+
+            print(scope.io, ")")
+        end
+    end
+
+    if multiline
+        println(scope.io)
+        write_indent(scope)
+    end
+    print(scope.io, ") ", inst_name, " (", join(node_names, ", "), ");")
+    println(scope.io)
+end
+
 # Verilog-A handler for SPICE Subcircuit Call
 function (scope::CodeGenScope{Sim})(n::SNode{SP.SubcktCall}) where {Sim <: AbstractVerilogASimulator}
     write_indent(scope)
@@ -1305,12 +1457,25 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.SubcktCall}) where {Sim <: Abstr
 
     # Add parameter overrides if present
     if !isempty(n.parameters)
+        multiline = should_format_multiline(n.parameters)
         print(scope.io, " #(")
+
         first_param = true
         for param in n.parameters
             if !first_param
-                print(scope.io, ", ")
+                print(scope.io, ",")
             end
+
+            if multiline
+                println(scope.io)
+                write_indent(scope)
+                print(scope.io, "  ")  # Indent parameters
+            else
+                if !first_param
+                    print(scope.io, " ")
+                end
+            end
+
             param_name = lowercase(String(param.name))
             print(scope.io, ".", param_name, "(")
             if param.val !== nothing
@@ -1318,6 +1483,11 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.SubcktCall}) where {Sim <: Abstr
             end
             print(scope.io, ")")
             first_param = false
+        end
+
+        if multiline
+            println(scope.io)
+            write_indent(scope)
         end
         print(scope.io, ")")
     end
