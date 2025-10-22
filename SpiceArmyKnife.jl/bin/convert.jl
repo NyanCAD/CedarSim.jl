@@ -69,11 +69,7 @@ function parse_commandline()
         "--input-simulator"
             help = "Input simulator: ngspice, hspice, pspice, xyce, spectre (determines language via language() trait)"
             arg_type = Symbol
-            default = nothing
-        "--input-lang", "-i"
-            help = "Input language: spice or spectre (overrides --input-simulator, default: auto-detect from extension)"
-            arg_type = Symbol
-            default = nothing
+            required = true
         "--output-simulator", "-s"
             help = "Output simulator: ngspice, hspice, pspice, xyce, spectre, openvaf, gnucap (required)"
             arg_type = Symbol
@@ -89,7 +85,6 @@ function main()
     input_file = args["input"]
     output_file = args["output"]
     input_simulator_sym = args["input-simulator"]
-    input_lang = args["input-lang"]
     output_simulator_sym = args["output-simulator"]
 
     # Validate input file
@@ -99,19 +94,9 @@ function main()
     end
 
     # Determine input language
-    # Priority: --input-lang > --input-simulator > auto-detect
-    if input_lang === nothing
-        if input_simulator_sym !== nothing
-            # Use language() trait from input simulator
-            input_sim = simulator_from_symbol(input_simulator_sym)
-            input_lang = language(input_sim)
-            println("Input simulator: $input_simulator_sym → language: $input_lang")
-        else
-            # Auto-detect from file extension
-            input_lang = detect_input_language(input_file)
-            println("Auto-detected input language: $input_lang")
-        end
-    end
+    input_sim = simulator_from_symbol(input_simulator_sym)
+    input_lang = language(input_sim)
+    println("Input simulator: $input_simulator_sym → language: $input_lang")
 
     # Map output simulator symbol to simulator instance
     output_sim = simulator_from_symbol(output_simulator_sym)
@@ -128,7 +113,7 @@ function main()
         # Parse input file
         println("Parsing input file...")
         ast = if input_lang == :spice
-            SpectreNetlistParser.parsefile(input_file; start_lang=:spice, implicit_title=true)
+            SpectreNetlistParser.parsefile(input_file; start_lang=:spice, spice_dialect=input_simulator_sym, implicit_title=true)
         else
             SpectreNetlistParser.parsefile(input_file; start_lang=:spectre)
         end
@@ -148,7 +133,7 @@ function main()
         # Write output file - use file IO directly to enable separate include file generation
         println("Writing output file...")
         output_dir = dirname(abspath(output_file))
-        options = Dict{Symbol, Any}(:output_dir => output_dir)
+        options = Dict{Symbol, Any}(:output_dir => output_dir, :spice_dialect => input_simulator_sym)
         open(output_file, "w") do io
             generate_code(ast, io, output_sim; options=options, includepaths=includepaths)
         end

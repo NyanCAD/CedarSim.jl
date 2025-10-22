@@ -26,7 +26,7 @@ function is_identifier_start_char(c::Char)
     return isletter(c) || c == '_'
 end
 
-is_instance_first_char(c) = c in ('B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X')
+is_instance_first_char(c) = c in ('B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y')
 
 @inline ishex(c::Char) = isdigit(c) || ('a' <= c <= 'f') || ('A' <= c <= 'F')
 @inline isbinary(c::Char) = c == '0' || c == '1'
@@ -606,6 +606,8 @@ function lex_instance(l::Lexer{IO_t,T}, c) where {IO_t,T}
         IDENTIFIER_SUBCIRCUIT_CALL
     elseif c == 'Y' && l.spice_dialect === :ngspice
         IDENTIFIER_TRANSMISSION_LINE # TXL
+    elseif c == 'Y' && l.spice_dialect === :xyce
+        IDENTIFIER_OSDI
     elseif c == 'Z' && l.spice_dialect === :ngspice
         IDENTIFIER_HFET_MESA
     else

@@ -957,7 +957,7 @@ function spice_device_type_to_va_module(device_type::AbstractString)
         "L" => "inductor",
     )
 
-    return get(mapping, device_upper, lowercase(device_type))
+    return get(mapping, device_upper, device_upper)
 end
 
 # =============================================================================
@@ -1019,7 +1019,8 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.IncludeStatement}) where {Sim <:
     else
         # Not yet processed - parse and convert recursively
         try
-            inc_ast = SP.parsefile(fullpath; implicit_title=false)
+            spice_dialect = get(scope.options, :spice_dialect, :ngspice)
+            inc_ast = SP.parsefile(fullpath; implicit_title=false, spice_dialect)
 
             if inc_ast.ps.errored
                 @warn "Parse errors in included file: $fullpath"
@@ -1160,7 +1161,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractVe
             end
         end
 
-        param_name = lowercase(String(param.name))
+        param_name = uppercase(String(param.name))
         print(scope.io, ".", param_name, "(")
 
         if param.val !== nothing
@@ -1380,7 +1381,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVe
     println(scope.io)
 end
 
-# Verilog-A handler for SPICE OSDI Device (N prefix - OpenVAF/OSDI models)
+# Verilog-A handler for SPICE OSDI Device (N prefix - OpenVAF/OSDI models, Y prefix - Xyce ADMS models)
 # Uses model macro convention like Diode but with variable nodes like SubcktCall
 function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: AbstractVerilogASimulator}
     write_indent(scope)
@@ -1393,6 +1394,12 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
     node_names = String[]
     for node in n.nodes
         push!(node_names, String(node))
+    end
+
+    if startswith(lowercase(inst_name), "y")
+        # Xyce OSDI device:
+        # Y<module name> <unique instance name>  <node>* <model name> <instance parameter list>
+        inst_name = popfirst!(node_names)
     end
 
     # `model_<name>_type #(`model_<name>_params, .param1(val1), ...) <name> (nodes...);
@@ -1420,7 +1427,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
                 print(scope.io, " ")
             end
 
-            param_name = lowercase(String(param.name))
+            param_name = uppercase(String(param.name))
             print(scope.io, ".", param_name, "(")
 
             if param.val !== nothing
@@ -1476,7 +1483,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.SubcktCall}) where {Sim <: Abstr
                 end
             end
 
-            param_name = lowercase(String(param.name))
+            param_name = uppercase(String(param.name))
             print(scope.io, ".", param_name, "(")
             if param.val !== nothing
                 scope(param.val)
