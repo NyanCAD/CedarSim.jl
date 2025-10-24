@@ -57,6 +57,10 @@ function parse_commandline(args)
             help = "Output simulator: ngspice, hspice, pspice, xyce, spectre, openvaf, gnucap (required)"
             arg_type = Symbol
             required = true
+        "--va-include"
+            help = "Verilog-A file to extract model definitions from (can be specified multiple times)"
+            action = :append_arg
+            default = String[]
     end
 
     return parse_args(args, s)
@@ -108,6 +112,29 @@ function (@main)(ARGS)
             println("✓ Successfully parsed input file")
         end
 
+        # Extract Verilog-A model definitions if provided
+        model_database = if !isempty(args["va-include"])
+            println("Extracting Verilog-A model definitions...")
+            dbs = map(args["va-include"]) do va_file
+                if !isfile(va_file)
+                    println("  ⚠ Warning: VA file not found: $va_file")
+                    return ModelDatabase([], Dict{Symbol, Int}())
+                end
+                println("  Reading: $va_file")
+                try
+                    extract_model_definitions(va_file)
+                catch e
+                    println("  ⚠ Warning: Failed to extract from $va_file: $e")
+                    ModelDatabase([], Dict{Symbol, Int}())
+                end
+            end
+            merged_db = merge_model_databases(dbs)
+            println("  ✓ Extracted $(length(merged_db.models)) model(s)")
+            merged_db
+        else
+            ModelDatabase([], Dict{Symbol, Int}())
+        end
+
         # Generate output
         println("Generating output code...")
         # Set up includepaths with input file's directory for resolving relative includes
@@ -116,7 +143,11 @@ function (@main)(ARGS)
         # Write output file - use file IO directly to enable separate include file generation
         println("Writing output file...")
         output_dir = dirname(abspath(output_file))
-        options = Dict{Symbol, Any}(:output_dir => output_dir, :spice_dialect => input_simulator_sym)
+        options = Dict{Symbol, Any}(
+            :output_dir => output_dir,
+            :spice_dialect => input_simulator_sym,
+            :va_models => model_database
+        )
         open(output_file, "w") do io
             generate_code(ast, io, output_sim; options=options, includepaths=includepaths)
         end

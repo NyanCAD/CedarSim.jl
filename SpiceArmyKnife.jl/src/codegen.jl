@@ -89,6 +89,19 @@ function create_child_scope(scope::CodeGenScope{Sim}) where {Sim <: AbstractSimu
 end
 
 """
+    render_to_string(scope::CodeGenScope{Sim}, node) -> String
+
+Render a node to a string by creating a temporary scope with an IOBuffer.
+"""
+function render_to_string(scope::CodeGenScope{Sim}, node) where {Sim <: AbstractSimulator}
+    buf = IOBuffer()
+    temp_scope = CodeGenScope{Sim}(buf, 0, scope.options, Set{Symbol}(), scope,
+                                   scope.includepaths, scope.processed_includes)
+    temp_scope(node)
+    return String(take!(buf))
+end
+
+"""
     add_param(scope::CodeGenScope, name::Symbol)
 
 Add a parameter name to the current scope's parameter set.

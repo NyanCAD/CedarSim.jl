@@ -120,6 +120,12 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Title}) where {Sim <: AbstractVe
     nothing
 end
 
+# Verilog-A handler for SPICE End statement - skip it (Verilog-A doesn't use .end)
+function (scope::CodeGenScope{Sim})(n::SNode{SP.EndStatement}) where {Sim <: AbstractVerilogASimulator}
+    # No-op: Verilog-A doesn't have .end statements, skip them
+    nothing
+end
+
 # Verilog-A handler for SPICE .lib blocks
 # Converts to `ifdef ... `endif conditional compilation
 function (scope::CodeGenScope{Sim})(n::SNode{SP.LibStatement}) where {Sim <: AbstractVerilogASimulator}
@@ -210,10 +216,11 @@ end
 # Verilog-A handler for SPICE .param statements
 # Top-level: converts to `define macros (global scope)
 # Module-level: converts to parameter declarations (scoped to module)
+# All SPICE parameter names are lowercased
 function (scope::CodeGenScope{Sim})(n::SNode{SP.ParamStatement}) where {Sim <: AbstractVerilogASimulator}
     for param in n.params
-        param_name_str = String(param.name)
-        param_name_sym = Symbol(lowercase(param_name_str))
+        param_name_str = lowercase(String(param.name))
+        param_name_sym = Symbol(param_name_str)
 
         # Track parameter in current scope
         add_param(scope, param_name_sym)
@@ -243,16 +250,16 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.ParamStatement}) where {Sim <: A
     end
 end
 
-# Verilog-A handler for SPICE Identifier - add backtick for global `define references
+# Verilog-A handler for SPICE Identifier - lowercase everything SPICE, add backtick for global `define references
 function (scope::CodeGenScope{Sim})(n::SNode{SP.Identifier}) where {Sim <: AbstractVerilogASimulator}
-    identifier_str = String(n)
-    identifier_sym = Symbol(lowercase(identifier_str))
+    identifier_str = lowercase(String(n))
+    identifier_sym = Symbol(identifier_str)
 
     if needs_backtick(scope, identifier_sym)
         # Global parameter - needs backtick prefix
         print(scope.io, "`", identifier_str)
     else
-        # Module parameter - use bare identifier
+        # Regular identifier
         print(scope.io, identifier_str)
     end
 end
@@ -272,51 +279,87 @@ function (scope::CodeGenScope{Sim})(n::SNode{SC.Identifier}) where {Sim <: Abstr
 end
 
 # Verilog-A handler for SPICE Model
-# Generates two `define macros: one for the device type, one for parameters
+# Context-aware: generates paramset at top-level, stores in local database when inside module
 # Prefixes identifiers with 'model_' to avoid naming conflicts (SPICE allows model names starting with digits)
 function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractVerilogASimulator}
-    # Skip leading trivia (comments) for Verilog-A
-
     model_name_orig = String(n.name)
     model_name = "model_" * lowercase(model_name_orig)
     device_type = String(n.typ)
     va_module = spice_device_type_to_va_module(device_type)
 
-    # Generate type macro: `define model_<name>_type <va_module>
-    println(scope.io, "`define ", model_name, "_type ", va_module)
+    # Look up VA model in database
+    va_models = get(scope.options, :va_models, nothing)
+    if va_models === nothing || isempty(va_models.models)
+        error("VA model database not found in options - required for model generation")
+    end
 
-    # Generate params macro: `define model_<name>_params .PARAM1(val1), .PARAM2(val2), ...
-    print(scope.io, "`define ", model_name, "_params ")
+    va_model = get_model(va_models, va_module)
+    if va_model === nothing
+        error("VA model '$va_module' not found in database")
+    end
 
-    multiline = should_format_multiline(n.parameters)
-    first_param = true
+    # Build override dictionary from modelcard parameters (lowercase keys for case-insensitive lookup)
+    overrides = Dict{String, Any}()
     for param in n.parameters
-        if !first_param
-            print(scope.io, ", ")
+        param_name_lower = lowercase(String(param.name))
+        overrides[param_name_lower] = param.val
+    end
+
+    # Check scope: global generates paramset, nested stores locally
+    if is_global_scope(scope)
+        # TOP-LEVEL: Generate paramset
+        println(scope.io, "paramset ", model_name, " ", va_module, ";")
+
+        # Generate parameter declarations (use lowercase)
+        for param in va_model.parameters
+            param_name_lower = lowercase(param.name)
+
+            print(scope.io, "  parameter ", param.ptype, " ", param_name_lower, " = ")
+            if haskey(overrides, param_name_lower)
+                # Use override value from modelcard
+                scope(overrides[param_name_lower])
+            else
+                # Use default value from VA model
+                print(scope.io, param.default_value)
+            end
+            println(scope.io, ";")
         end
 
-        if multiline
-            # Each parameter on its own line for readability
-            # Need backslash continuation for `define directives
-            if !first_param
-                println(scope.io, "\\")
-                print(scope.io, "  ")  # Indent continuation
+        # Generate parameter assignments (VA model case = lowercase)
+        for param in va_model.parameters
+            param_name_lower = lowercase(param.name)
+            println(scope.io, "  .", param.name, " = ", param_name_lower, ";")
+        end
+
+        # End paramset
+        println(scope.io, "endparamset")
+        println(scope.io)  # Extra blank line after paramset
+    else
+        # INSIDE MODULE: Store in local ModelDatabase, don't generate code
+
+        # Get or create local models database
+        local_db = get!(scope.options, :local_models) do
+            ModelDatabase(ModelDefinition[])
+        end
+
+        # Build parameter list with only overrides (not defaults)
+        override_params = ModelParameter[]
+        for param in va_model.parameters
+            param_name_lower = lowercase(param.name)
+
+            # Only store parameters that have overrides
+            if haskey(overrides, param_name_lower)
+                value_str = render_to_string(scope, overrides[param_name_lower])
+                push!(override_params, ModelParameter(param.name, param.ptype, value_str))
             end
         end
 
-        param_name = uppercase(String(param.name))
-        print(scope.io, ".", param_name, "(")
+        # Create model definition (name is just va_module)
+        model_def = ModelDefinition(va_module, override_params)
 
-        if param.val !== nothing
-            scope(param.val)
-        end
-
-        print(scope.io, ")")
-        first_param = false
+        # Add to database (mutates in place)
+        add_model!(local_db, model_def, model_name)
     end
-
-    println(scope.io)
-    println(scope.io)  # Extra blank line after macro definitions
 end
 
 # Verilog-A handler for SPICE Subcircuit
@@ -358,7 +401,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Subckt}) where {Sim <: AbstractV
     if !isempty(n.parameters)
         println(scope.io)
         for par in n.parameters
-            param_name_str = String(par.name)
+            param_name_str = lowercase(String(par.name))
             print(scope.io, "  parameter real ", param_name_str, " = ")
             if par.val !== nothing
                 child_scope(par.val)
@@ -502,30 +545,87 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVe
     model_name_orig = String(n.model)
     model_name = "model_" * lowercase(model_name_orig)
 
-    # `model_<name>_type #(`model_<name>_params) <name> (<pos>, <neg>);
-    print(scope.io, "`", model_name, "_type #(`", model_name, "_params")
+    # Check if model is defined locally (inside module)
+    local_db = get(scope.options, :local_models, nothing)
+    local_model = local_db !== nothing ? get_model(local_db, model_name) : nothing
 
-    # Add instance parameters if present
-    if !isempty(n.params)
+    if local_model !== nothing
+        # INLINE: Model defined locally, merge parameters directly
+
+        # va_module is stored directly in ModelDefinition.name
+        va_module = local_model.name
+
+        # Get full VA model for case-correct parameter lookup
+        va_models = scope.options[:va_models]
+        va_model = get_model(va_models, va_module)
+
+        # Start with model card's overrides
+        param_dict = Dict{String, String}()
+        for param in local_model.parameters
+            param_dict[param.name] = param.default_value
+        end
+
+        # Override with instance parameters (looking up correct case from VA model)
         for param in n.params
-            print(scope.io, ", ")
-            param_name = lowercase(String(param.name))
-            print(scope.io, ".", param_name, "(")
-
             if param.val !== nothing
-                scope(param.val)
+                # Get correct case from VA model
+                param_name_correct = get_param_name(va_model, String(param.name))
+                if param_name_correct !== nothing
+                    param_dict[param_name_correct] = render_to_string(scope, param.val)
+                end
             end
+        end
 
+        # Generate: va_module #(.param1(val1), ...) inst_name (pos, neg);
+        print(scope.io, va_module)
+        if !isempty(param_dict)
+            print(scope.io, " #(")
+            first_param = true
+            for (param_name, param_value) in param_dict
+                if !first_param
+                    print(scope.io, ", ")
+                end
+                print(scope.io, ".", param_name, "(", param_value, ")")
+                first_param = false
+            end
             print(scope.io, ")")
         end
+        print(scope.io, " ", inst_name, " (", pos_node, ", ", neg_node, ");")
+    else
+        # REFERENCE: Model defined at top-level, use paramset reference
+
+        # model_<name> #(.param1(val1), ...) <name> (<pos>, <neg>);
+        print(scope.io, model_name)
+
+        # Add instance parameters if present
+        if !isempty(n.params)
+            print(scope.io, " #(")
+            first_param = true
+            for param in n.params
+                if !first_param
+                    print(scope.io, ", ")
+                end
+                param_name = lowercase(String(param.name))
+                print(scope.io, ".", param_name, "(")
+
+                if param.val !== nothing
+                    scope(param.val)
+                end
+
+                print(scope.io, ")")
+                first_param = false
+            end
+            print(scope.io, ")")
+        end
+
+        print(scope.io, " ", inst_name, " (", pos_node, ", ", neg_node, ");")
     end
 
-    print(scope.io, ") ", inst_name, " (", pos_node, ", ", neg_node, ");")
     println(scope.io)
 end
 
 # Verilog-A handler for SPICE OSDI Device (N prefix - OpenVAF/OSDI models, Y prefix - Xyce ADMS models)
-# Uses model macro convention like Diode but with variable nodes like SubcktCall
+# Uses paramset calling convention with variable nodes like SubcktCall
 function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: AbstractVerilogASimulator}
     write_indent(scope)
 
@@ -545,47 +645,118 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
         inst_name = popfirst!(node_names)
     end
 
-    # `model_<name>_type #(`model_<name>_params, .param1(val1), ...) <name> (nodes...);
-    multiline = should_format_multiline(n.parameters)
+    # Check if model is defined locally (inside module)
+    local_db = get(scope.options, :local_models, nothing)
+    local_model = local_db !== nothing ? get_model(local_db, model_name) : nothing
 
-    print(scope.io, "`", model_name, "_type #(")
-    if multiline
-        println(scope.io)
-        write_indent(scope)
-        print(scope.io, "  `", model_name, "_params")
-    else
-        print(scope.io, "`", model_name, "_params")
-    end
+    if local_model !== nothing
+        # INLINE: Model defined locally, merge parameters directly
 
-    # Add instance parameters if present
-    if !isempty(n.parameters)
+        # va_module is stored directly in ModelDefinition.name
+        va_module = local_model.name
+
+        # Get full VA model for case-correct parameter lookup
+        va_models = scope.options[:va_models]
+        va_model = get_model(va_models, va_module)
+
+        # Start with model card's overrides
+        param_dict = Dict{String, String}()
+        for param in local_model.parameters
+            param_dict[param.name] = param.default_value
+        end
+
+        # Override with instance parameters (looking up correct case from VA model)
         for param in n.parameters
-            print(scope.io, ",")
+            if param.val !== nothing
+                # Get correct case from VA model
+                param_name_correct = get_param_name(va_model, String(param.name))
+                if param_name_correct !== nothing
+                    param_dict[param_name_correct] = render_to_string(scope, param.val)
+                end
+            end
+        end
+
+        # Generate: va_module #(.param1(val1), ...) inst_name (nodes...);
+        print(scope.io, va_module)
+        if !isempty(param_dict)
+            multiline = should_format_multiline(n.parameters)
+            print(scope.io, " #(")
+
+            first_param = true
+            for (param_name, param_value) in param_dict
+                if !first_param
+                    print(scope.io, ",")
+                end
+
+                if multiline
+                    println(scope.io)
+                    write_indent(scope)
+                    print(scope.io, "  ")
+                else
+                    if !first_param
+                        print(scope.io, " ")
+                    end
+                end
+
+                print(scope.io, ".", param_name, "(", param_value, ")")
+                first_param = false
+            end
 
             if multiline
                 println(scope.io)
                 write_indent(scope)
-                print(scope.io, "  ")  # Indent parameters
-            else
-                print(scope.io, " ")
             end
-
-            param_name = uppercase(String(param.name))
-            print(scope.io, ".", param_name, "(")
-
-            if param.val !== nothing
-                scope(param.val)
-            end
-
             print(scope.io, ")")
         end
+        print(scope.io, " ", inst_name, " (", join(node_names, ", "), ");")
+    else
+        # REFERENCE: Model defined at top-level, use paramset reference
+
+        # model_<name> #(.param1(val1), ...) <name> (nodes...);
+        print(scope.io, model_name)
+
+        # Add instance parameters if present
+        if !isempty(n.parameters)
+            multiline = should_format_multiline(n.parameters)
+            print(scope.io, " #(")
+
+            first_param = true
+            for param in n.parameters
+                if !first_param
+                    print(scope.io, ",")
+                end
+
+                if multiline
+                    println(scope.io)
+                    write_indent(scope)
+                    print(scope.io, "  ")  # Indent parameters
+                else
+                    if !first_param
+                        print(scope.io, " ")
+                    end
+                end
+
+                param_name = lowercase(String(param.name))
+                print(scope.io, ".", param_name, "(")
+
+                if param.val !== nothing
+                    scope(param.val)
+                end
+
+                print(scope.io, ")")
+                first_param = false
+            end
+
+            if multiline
+                println(scope.io)
+                write_indent(scope)
+            end
+            print(scope.io, ")")
+        end
+
+        print(scope.io, " ", inst_name, " (", join(node_names, ", "), ");")
     end
 
-    if multiline
-        println(scope.io)
-        write_indent(scope)
-    end
-    print(scope.io, ") ", inst_name, " (", join(node_names, ", "), ");")
     println(scope.io)
 end
 
@@ -626,7 +797,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.SubcktCall}) where {Sim <: Abstr
                 end
             end
 
-            param_name = uppercase(String(param.name))
+            param_name = lowercase(String(param.name))
             print(scope.io, ".", param_name, "(")
             if param.val !== nothing
                 scope(param.val)
