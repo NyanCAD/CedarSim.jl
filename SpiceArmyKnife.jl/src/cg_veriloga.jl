@@ -71,6 +71,21 @@ function convert_magnitude_to_exponential(s::AbstractString)
 end
 
 """
+    hasparam(params, name::String) -> Bool
+
+Check if parameter list contains a parameter with the given name (case-insensitive).
+"""
+function hasparam(params, name::String)
+    name_lower = lowercase(name)
+    for p in params
+        if lowercase(String(p.name)) == name_lower
+            return true
+        end
+    end
+    return false
+end
+
+"""
     spice_device_type_to_va_module(device_type::AbstractString) -> String
 
 Map SPICE device type codes to Verilog-A module names.
@@ -380,10 +395,10 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Subckt}) where {Sim <: AbstractV
     # Module header: module <name>(<ports>);
     print(scope.io, "module ", subckt_name, "(")
 
-    # Collect port names
+    # Collect port names (prefix all with node_)
     port_names = String[]
     for node in n.subckt_nodes
-        push!(port_names, String(node))
+        push!(port_names, "node_" * String(node))
     end
 
     print(scope.io, join(port_names, ", "))
@@ -416,8 +431,19 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Subckt}) where {Sim <: AbstractV
 
     # Body statements (with child scope and increased indent)
     inner_scope = with_indent(child_scope, 1)
+
+    # First pass: process .model cards to populate local_db
     for stmt in n.stmts
-        inner_scope(stmt)
+        if stmt isa SNode{SP.Model}
+            inner_scope(stmt)
+        end
+    end
+
+    # Second pass: process all non-model statements
+    for stmt in n.stmts
+        if !(stmt isa SNode{SP.Model})
+            inner_scope(stmt)
+        end
     end
 
     # End module
@@ -483,17 +509,78 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Resistor}) where {Sim <: Abstrac
     write_indent(scope)
 
     inst_name = String(n.name)
-    pos_node = String(n.pos)
-    neg_node = String(n.neg)
+    pos_node = "node_" * String(n.pos)
+    neg_node = "node_" * String(n.neg)
 
-    # resistor #(.r(<value>)) <name> (<pos>, <neg>);
-    print(scope.io, "resistor #(.r(")
+    # If params contains r or l, val is the model or nothing
+    if hasparam(n.params, "r") || hasparam(n.params, "l")
+        # val is model name (or nothing = built-in resistor)
+        if n.val !== nothing
+            # Has model reference - must be in local_db
+            model_name_orig = String(n.val)
+            local_db = get(scope.options, :local_models, nothing)
+            local_model = local_db !== nothing ? get_model(local_db, model_name_orig) : nothing
 
-    if n.val !== nothing
-        scope(n.val)
+            if local_model === nothing
+                error("Resistor $inst_name references undefined model '$model_name_orig'")
+            end
+
+            # Local model found - inline parameters
+            va_models = scope.options[:va_models]
+            va_model = get_model(va_models, "resistor")
+
+            # Start with model card's overrides
+            param_dict = Dict{String, String}()
+            for param in local_model.parameters
+                param_dict[param.name] = param.default_value
+            end
+
+            # Override with instance parameters (looking up correct case from VA model)
+            for param in n.params
+                if param.val !== nothing
+                    param_name_correct = get_param_name(va_model, String(param.name))
+                    if param_name_correct !== nothing
+                        param_dict[param_name_correct] = render_to_string(scope, param.val)
+                    end
+                end
+            end
+
+            # Generate instance with inlined parameters
+            print(scope.io, "resistor #(")
+            first_param = true
+            for (name, value) in param_dict
+                if !first_param
+                    print(scope.io, ", ")
+                end
+                print(scope.io, ".", lowercase(name), "(", value, ")")
+                first_param = false
+            end
+            print(scope.io, ") ", inst_name, " (", pos_node, ", ", neg_node, ");")
+        else
+            # No model - built-in resistor with parameters
+            print(scope.io, "resistor #(")
+            first_param = true
+            for param in n.params
+                if !first_param
+                    print(scope.io, ", ")
+                end
+                print(scope.io, ".", lowercase(String(param.name)), "(")
+                if param.val !== nothing
+                    scope(param.val)
+                end
+                print(scope.io, ")")
+                first_param = false
+            end
+            print(scope.io, ") ", inst_name, " (", pos_node, ", ", neg_node, ");")
+        end
+    else
+        # val is the resistance value
+        print(scope.io, "resistor #(.r(")
+        if n.val !== nothing
+            scope(n.val)
+        end
+        print(scope.io, ")) ", inst_name, " (", pos_node, ", ", neg_node, ");")
     end
-
-    print(scope.io, ")) ", inst_name, " (", pos_node, ", ", neg_node, ");")
     println(scope.io)
 end
 
@@ -502,8 +589,8 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Capacitor}) where {Sim <: Abstra
     write_indent(scope)
 
     inst_name = String(n.name)
-    pos_node = String(n.pos)
-    neg_node = String(n.neg)
+    pos_node = "node_" * String(n.pos)
+    neg_node = "node_" * String(n.neg)
 
     # capacitor #(.c(<value>)) <name> (<pos>, <neg>);
     print(scope.io, "capacitor #(.c(")
@@ -521,8 +608,8 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Inductor}) where {Sim <: Abstrac
     write_indent(scope)
 
     inst_name = String(n.name)
-    pos_node = String(n.pos)
-    neg_node = String(n.neg)
+    pos_node = "node_" * String(n.pos)
+    neg_node = "node_" * String(n.neg)
 
     # inductor #(.l(<value>)) <name> (<pos>, <neg>);
     print(scope.io, "inductor #(.l(")
@@ -540,8 +627,8 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVe
     write_indent(scope)
 
     inst_name = String(n.name)
-    pos_node = String(n.pos)
-    neg_node = String(n.neg)
+    pos_node = "node_" * String(n.pos)
+    neg_node = "node_" * String(n.neg)
     model_name_orig = String(n.model)
     model_name = "model_" * lowercase(model_name_orig)
 
@@ -633,7 +720,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
     model_name_orig = String(n.model)
     model_name = "model_" * lowercase(model_name_orig)
 
-    # Collect node names
+    # Collect node names (without prefix yet)
     node_names = String[]
     for node in n.nodes
         push!(node_names, String(node))
@@ -642,6 +729,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
     if startswith(lowercase(inst_name), "y")
         # Xyce OSDI device:
         # Y<module name> <unique instance name>  <node>* <model name> <instance parameter list>
+        # First "node" is actually the instance name
         inst_name = popfirst!(node_names)
     end
 
@@ -708,7 +796,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
             end
             print(scope.io, ")")
         end
-        print(scope.io, " ", inst_name, " (", join(node_names, ", "), ");")
+        print(scope.io, " ", inst_name, " (", join("node_" .* node_names, ", "), ");")
     else
         # REFERENCE: Model defined at top-level, use paramset reference
 
@@ -754,7 +842,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
             print(scope.io, ")")
         end
 
-        print(scope.io, " ", inst_name, " (", join(node_names, ", "), ");")
+        print(scope.io, " ", inst_name, " (", join("node_" .* node_names, ", "), ");")
     end
 
     println(scope.io)
@@ -767,7 +855,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.SubcktCall}) where {Sim <: Abstr
     inst_name = String(n.name)
     subckt_name = String(n.model)
 
-    # Collect node names
+    # Collect node names (without prefix yet)
     node_names = String[]
     for node in n.nodes
         push!(node_names, String(node))
@@ -814,7 +902,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.SubcktCall}) where {Sim <: Abstr
     end
 
     print(scope.io, " ", inst_name, "(")
-    print(scope.io, join(node_names, ", "))
+    print(scope.io, join("node_" .* node_names, ", "))
     print(scope.io, ");")
 
     println(scope.io)
