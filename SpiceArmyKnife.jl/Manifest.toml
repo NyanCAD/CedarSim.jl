@@ -1,6 +1,6 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.12.0"
+julia_version = "1.12.1"
 manifest_format = "2.0"
 project_hash = "24fa53044c8207185c3d21700875db6d92d8b729"
 
@@ -94,6 +94,8 @@ version = "1.12.0"
 
 [[deps.Lexers]]
 path = "../Lexers.jl"
+repo-subdir = "Lexers.jl"
+repo-url = "https://github.com/NyanCAD/SpiceArmyKnife.jl"
 uuid = "8fc43420-9e17-4e89-a998-f4e9593a1dfc"
 version = "0.4.0"
 
@@ -226,6 +228,8 @@ version = "1.11.0"
 [[deps.SpectreNetlistParser]]
 deps = ["AbstractTrees", "Lexers", "SnoopPrecompile"]
 path = "../SpectreNetlistParser.jl"
+repo-subdir = "SpectreNetlistParser.jl"
+repo-url = "https://github.com/NyanCAD/SpiceArmyKnife.jl"
 uuid = "72c5b8b4-6eac-4a9c-9647-0f5a982ce801"
 version = "0.6.1"
 

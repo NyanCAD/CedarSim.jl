@@ -831,4 +831,8 @@ export extract_definitions, extract_definitions_from_file, to_mosaic_format, pro
 # Code generation exports
 export CodeGenScope, generate_code
 
+# Include app submodules
+include("Generate.jl")
+include("Convert.jl")
+
 end # module SpiceArmyKnife

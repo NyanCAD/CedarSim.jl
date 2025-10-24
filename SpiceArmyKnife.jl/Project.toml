@@ -1,7 +1,10 @@
 name = "SpiceArmyKnife"
 uuid = "9bd5f295-a833-4c5a-8e17-8bae7b000705"
-authors = ["Pepijn de Vos <pepijndevos@gmail.com>"]
 version = "0.1.0"
+authors = ["Pepijn de Vos <pepijndevos@gmail.com>"]
+
+[workspace]
+projects = ["test"]
 
 [deps]
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
@@ -14,6 +17,10 @@ StringEncodings = "69024149-9ee7-55f6-a4c4-859efe599b68"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 p7zip_jll = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 
+[sources]
+Lexers = {subdir = "Lexers.jl", url = "https://github.com/NyanCAD/SpiceArmyKnife.jl"}
+SpectreNetlistParser = {subdir = "SpectreNetlistParser.jl", url = "https://github.com/NyanCAD/SpiceArmyKnife.jl"}
+
 [compat]
 ArgParse = "1.2.0"
 Downloads = "1.6.0"
@@ -23,5 +30,8 @@ StringEncodings = "0.3.7"
 UUIDs = "1.11.0"
 p7zip_jll = "17.4.0"
 
-[workspace]
-projects = ["test"]
+[apps.spak-convert]
+submodule = "Convert"
+
+[apps.spak-generate]
+submodule = "Generate"

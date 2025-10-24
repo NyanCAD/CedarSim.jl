@@ -10,14 +10,13 @@
 # - Use trait functions (hasdocprops, temperature_param_mapping, etc.) to handle simulator quirks
 # - Non-recursive (single file) - caller handles include/lib traversal
 
-# Import types from parent module - reuse parent's imports
-import ..SNode, ..SC, ..SP
+# This file is included in SpiceArmyKnife module, so SNode, SC, SP are already in scope
 
 # Import RedTree utilities
-using ..SpectreNetlistParser.RedTree: fullcontents
+using SpectreNetlistParser.RedTree: fullcontents
 
 # Import error checking
-using ..SpectreNetlistParser: visit_errors
+using SpectreNetlistParser: visit_errors
 
 # Include simulator traits (defines types and trait functions)
 include("simulator_traits.jl")

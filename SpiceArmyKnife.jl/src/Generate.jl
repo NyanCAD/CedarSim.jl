@@ -1,18 +1,17 @@
-#!/usr/bin/env julia
-
 """
 Model Database Generator
 
-This script processes multiple SPICE model archives from various sources
+This module processes multiple SPICE model archives from various sources
 and generates a unified JSON database for CouchDB upload.
 """
+module Generate
 
-using SpiceArmyKnife
+using ..SpiceArmyKnife
 using JSON
 using HTTP
 using StringEncodings
 
-function main()
+function (@main)(ARGS)
     println("=" ^ 80)
     println("SPICE Model Database Generator")
     println("=" ^ 80)
@@ -247,6 +246,4 @@ function upload_to_couchdb(models, chunk_size=100)
     end
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    main()
-end
+end # module Generate

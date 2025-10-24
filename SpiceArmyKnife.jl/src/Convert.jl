@@ -1,61 +1,44 @@
-#!/usr/bin/env julia
-
 """
 SPICE/Spectre/Verilog-A Netlist Converter
 
 Convert netlists between different SPICE/Spectre dialects and to Verilog-A format.
 
 Usage:
-    julia convert.jl input.sp output.sp --output-simulator ngspice
-    julia convert.jl circuit.sp circuit.va --output-simulator openvaf
+    spak-convert input.sp output.sp --input-simulator pspice --output-simulator ngspice
+    spak-convert circuit.sp circuit.va --input-simulator ngspice --output-simulator openvaf
 
 Examples:
     # Convert Cordell models to ngspice-compatible format (filters doc parameters)
-    julia convert.jl Cordell-Models.txt ngspice-models.sp --output-simulator ngspice
+    spak-convert Cordell-Models.txt ngspice-models.sp --input-simulator pspice --output-simulator ngspice
 
     # Convert SPICE to Verilog-A for OpenVAF
-    julia convert.jl diode_divider.lib diode_divider.va --output-simulator openvaf
+    spak-convert diode_divider.lib diode_divider.va --input-simulator ngspice --output-simulator openvaf
 
     # Convert SPICE to Spectre format
-    julia convert.jl circuit.sp circuit.scs --output-simulator spectre
-
-    # Explicitly specify input format
-    julia convert.jl input.cir output.sp --input-lang spice --output-simulator ngspice
+    spak-convert circuit.sp circuit.scs --input-simulator ngspice --output-simulator spectre
 """
+module Convert
 
-using SpiceArmyKnife
-using SpiceArmyKnife.SpectreNetlistParser
+using ..SpiceArmyKnife
+using SpectreNetlistParser
 using ArgParse
 
-function detect_input_language(filepath::String)
-    """Auto-detect input file language from extension."""
-    ext = lowercase(splitext(filepath)[2])
-    if ext in [".sp", ".spi", ".spice", ".cir", ".lib"]
-        return :spice
-    elseif ext in [".scs", ".spectre"]
-        return :spectre
-    else
-        # Default to SPICE for unknown extensions
-        return :spice
-    end
-end
-
-function parse_commandline()
+function parse_commandline(args)
     s = ArgParseSettings(
         description = "Convert SPICE/Spectre netlists between different dialects or to Verilog-A",
         epilog = """
             Examples:
               # Convert to ngspice (filters documentation parameters)
-              \$ julia convert.jl models.txt ngspice-models.sp --output-simulator ngspice
+              \$ spak-convert models.txt ngspice-models.sp --input-simulator pspice --output-simulator ngspice
 
               # Convert SPICE to Verilog-A for OpenVAF
-              \$ julia convert.jl diode_divider.lib diode_divider.va --output-simulator openvaf
+              \$ spak-convert diode_divider.lib diode_divider.va --input-simulator ngspice --output-simulator openvaf
 
               # Convert SPICE to Spectre
-              \$ julia convert.jl circuit.sp circuit.scs --output-simulator spectre
+              \$ spak-convert circuit.sp circuit.scs --input-simulator ngspice --output-simulator spectre
 
               # Specify input simulator explicitly
-              \$ julia convert.jl input.cir output.sp --input-simulator hspice --output-simulator ngspice
+              \$ spak-convert input.cir output.sp --input-simulator hspice --output-simulator ngspice
             """
     )
 
@@ -76,11 +59,11 @@ function parse_commandline()
             required = true
     end
 
-    return parse_args(s)
+    return parse_args(args, s)
 end
 
-function main()
-    args = parse_commandline()
+function (@main)(ARGS)
+    args = parse_commandline(ARGS)
 
     input_file = args["input"]
     output_file = args["output"]
@@ -168,6 +151,4 @@ function main()
     end
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    main()
-end
+end # module Convert
