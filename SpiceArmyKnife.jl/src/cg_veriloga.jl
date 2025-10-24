@@ -1,0 +1,673 @@
+# =============================================================================
+# Verilog-A Code Generation
+# =============================================================================
+
+"""
+    convert_magnitude_to_exponential(s::AbstractString) -> String
+
+Convert SPICE magnitude suffixes to exponential notation for Verilog-A.
+
+Examples:
+- "1k" → "1e3"
+- "2.682n" → "2.682e-9"
+- "100u" → "100e-6"
+- "1.5meg" → "1.5e6"
+
+Supported suffixes:
+- T/t: 1e12 (tera)
+- G/g: 1e9 (giga)
+- meg/MEG: 1e6 (mega - special case, case insensitive)
+- k/K: 1e3 (kilo)
+- m: 1e-3 (milli)
+- u/µ/U: 1e-6 (micro)
+- n/N: 1e-9 (nano)
+- p/P: 1e-12 (pico)
+- f/F: 1e-15 (femto)
+"""
+function convert_magnitude_to_exponential(s::AbstractString)
+    s_trimmed = strip(s)
+
+    # Try to match number + optional magnitude suffix
+    # Pattern: optional sign, digits, optional decimal point and more digits, optional exponent, optional magnitude
+    m = match(r"^([+-]?(?:\d+\.?\d*|\d*\.\d+)(?:[eE][+-]?\d+)?)(meg|MEG|[TGKkmuµnpfUNPF])?$"i, s_trimmed)
+
+    if m === nothing
+        # No magnitude suffix, return as-is
+        return s_trimmed
+    end
+
+    num_part = m.captures[1]
+    suffix = m.captures[2]
+
+    if suffix === nothing
+        return num_part
+    end
+
+    # Map suffix to exponent
+    exponent = if occursin(r"^meg$"i, suffix)
+        "e6"
+    elseif suffix in ["T", "t"]
+        "e12"
+    elseif suffix in ["G", "g"]
+        "e9"
+    elseif suffix in ["k", "K"]
+        "e3"
+    elseif suffix == "m"
+        "e-3"
+    elseif suffix in ["u", "µ", "U"]
+        "e-6"
+    elseif suffix in ["n", "N"]
+        "e-9"
+    elseif suffix in ["p", "P"]
+        "e-12"
+    elseif suffix in ["f", "F"]
+        "e-15"
+    else
+        # Unknown suffix, return original
+        return s_trimmed
+    end
+
+    return num_part * exponent
+end
+
+"""
+    spice_device_type_to_va_module(device_type::AbstractString) -> String
+
+Map SPICE device type codes to Verilog-A module names.
+
+Supported mappings:
+- "D" → "diode"
+- "R" → "resistor"
+- "C" → "capacitor"
+- "L" → "inductor"
+"""
+function spice_device_type_to_va_module(device_type::AbstractString)
+    device_upper = uppercase(strip(device_type))
+
+    mapping = Dict(
+        "D" => "diode",
+        "R" => "resistor",
+        "C" => "capacitor",
+        "L" => "inductor",
+    )
+
+    return get(mapping, device_upper, device_upper)
+end
+
+# =============================================================================
+# Verilog-A Handlers - Convert SPICE/Spectre to Verilog-A
+# =============================================================================
+
+# Verilog-A terminal handlers - explicit support for common terminals
+function (scope::CodeGenScope{Sim})(n::SNode{<:Union{SP.Operator, SC.Operator}}) where {Sim <: AbstractVerilogASimulator}
+    print(scope.io, String(n))
+end
+
+function (scope::CodeGenScope{Sim})(n::SNode{<:Union{SP.StringLiteral, SC.StringLiteral}}) where {Sim <: AbstractVerilogASimulator}
+    print(scope.io, String(n))
+end
+
+# Handler for NumberLiteral in Verilog-A context - convert magnitude suffixes
+function (scope::CodeGenScope{Sim})(n::SNode{<:Union{SP.NumberLiteral, SC.NumberLiteral}}) where {Sim <: AbstractVerilogASimulator}
+    val_str = String(n)
+    converted_val = convert_magnitude_to_exponential(val_str)
+    print(scope.io, converted_val)
+end
+
+# Verilog-A handler for SPICE Title - skip it (Verilog-A doesn't use title lines)
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Title}) where {Sim <: AbstractVerilogASimulator}
+    # No-op: Verilog-A doesn't have title lines, skip them
+    nothing
+end
+
+# Verilog-A handler for SPICE .lib blocks
+# Converts to `ifdef ... `endif conditional compilation
+function (scope::CodeGenScope{Sim})(n::SNode{SP.LibStatement}) where {Sim <: AbstractVerilogASimulator}
+    lib_name = String(n.name)
+
+    # Emit `ifdef directive
+    println(scope.io, "`ifdef ", lib_name)
+
+    # Process body statements
+    for stmt in n.stmts
+        scope(stmt)
+    end
+
+    # Emit `endif
+    println(scope.io, "`endif")
+    println(scope.io)  # Extra blank line after lib block
+end
+
+# Verilog-A handler for SPICE .include statements
+# Recursively processes included files with inherited scope
+# - If output is a file: writes to separate .va file in same directory, emits `include directive
+# - If output is memory (IOBuffer): inlines the content directly, no `include directive
+function (scope::CodeGenScope{Sim})(n::SNode{SP.IncludeStatement}) where {Sim <: AbstractVerilogASimulator}
+    # Strip outer quotes from path (preserves escape sequences)
+    path_str = strip(String(n.path), ['"', '\''])
+
+    # Compute output path with .va extension (preserve relative directory structure)
+    output_relpath = splitext(path_str)[1] * ".va"
+
+    # Resolve the full path to the include file
+    fullpath = resolve_includepath(path_str, scope.includepaths)
+
+    # Check if already processed
+    if haskey(scope.processed_includes, fullpath)
+        # Validate scope matches
+        cached_params = scope.processed_includes[fullpath]
+        if cached_params != scope.params
+            @warn "Include file $fullpath included from contexts with different scopes" cached_scope=cached_params current_scope=scope.params
+        end
+    else
+        # Not yet processed - parse and convert recursively
+        try
+            spice_dialect = get(scope.options, :spice_dialect, :ngspice)
+            inc_ast = SP.parsefile(fullpath; implicit_title=false, spice_dialect)
+
+            if inc_ast.ps.errored
+                @warn "Parse errors in included file: $fullpath"
+                visit_errors(inc_ast; io=stderr)
+            end
+
+            # Determine if we're writing to a file or memory
+            if scope.io isa IOStream
+                # Writing to file - create separate .va file, mirroring directory structure
+                output_dir = get(scope.options, :output_dir, ".")
+                output_path = joinpath(output_dir, output_relpath)
+
+                # Create directory structure if needed (equivalent to mkdir -p)
+                mkpath(dirname(output_path))
+
+                # Create new scope for included file with file IO
+                # Prepend directory of included file so nested includes resolve relative to it
+                inc_includepaths = [dirname(fullpath), scope.includepaths...]
+                open(output_path, "w") do inc_io
+                    inc_scope = CodeGenScope{Sim}(inc_io, 0, scope.options, scope.params, scope.parent_scope,
+                                                  inc_includepaths, scope.processed_includes)
+                    inc_scope(inc_ast)
+                end
+            else
+                # Writing to memory (IOBuffer) - inline the content directly
+                scope(inc_ast)
+            end
+
+            # Cache the scope parameters for this file
+            scope.processed_includes[fullpath] = copy(scope.params)
+        catch e
+            @warn "Failed to process include file: $fullpath" exception=(e, catch_backtrace())
+            # Continue with main conversion despite include failure
+        end
+    end
+
+    # Emit `include directive only if writing to file (mirrors file structure)
+    if scope.io isa IOStream
+        println(scope.io, "`include \"", output_relpath, "\"")
+    end
+    # If IOBuffer: content already inlined, no directive needed
+end
+
+# Verilog-A handler for SPICE .param statements
+# Top-level: converts to `define macros (global scope)
+# Module-level: converts to parameter declarations (scoped to module)
+function (scope::CodeGenScope{Sim})(n::SNode{SP.ParamStatement}) where {Sim <: AbstractVerilogASimulator}
+    for param in n.params
+        param_name_str = String(param.name)
+        param_name_sym = Symbol(lowercase(param_name_str))
+
+        # Track parameter in current scope
+        add_param(scope, param_name_sym)
+
+        if is_global_scope(scope)
+            # Top-level: emit `define macro
+            print(scope.io, "`define ", param_name_str, " ")
+            if param.val !== nothing
+                scope(param.val)
+            else
+                # Parameter without value - default to 1
+                print(scope.io, "1")
+            end
+            println(scope.io)
+        else
+            # Module-level: emit parameter declaration
+            write_indent(scope)
+            print(scope.io, "parameter real ", param_name_str, " = ")
+            if param.val !== nothing
+                scope(param.val)
+            else
+                # Parameter without value - default to 0
+                print(scope.io, "0")
+            end
+            println(scope.io, ";")
+        end
+    end
+end
+
+# Verilog-A handler for SPICE Identifier - add backtick for global `define references
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Identifier}) where {Sim <: AbstractVerilogASimulator}
+    identifier_str = String(n)
+    identifier_sym = Symbol(lowercase(identifier_str))
+
+    if needs_backtick(scope, identifier_sym)
+        # Global parameter - needs backtick prefix
+        print(scope.io, "`", identifier_str)
+    else
+        # Module parameter - use bare identifier
+        print(scope.io, identifier_str)
+    end
+end
+
+# Verilog-A handler for Spectre Identifier - add backtick for global `define references
+function (scope::CodeGenScope{Sim})(n::SNode{SC.Identifier}) where {Sim <: AbstractVerilogASimulator}
+    identifier_str = String(n)
+    identifier_sym = Symbol(lowercase(identifier_str))
+
+    if needs_backtick(scope, identifier_sym)
+        # Global parameter - needs backtick prefix
+        print(scope.io, "`", identifier_str)
+    else
+        # Module parameter - use bare identifier
+        print(scope.io, identifier_str)
+    end
+end
+
+# Verilog-A handler for SPICE Model
+# Generates two `define macros: one for the device type, one for parameters
+# Prefixes identifiers with 'model_' to avoid naming conflicts (SPICE allows model names starting with digits)
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractVerilogASimulator}
+    # Skip leading trivia (comments) for Verilog-A
+
+    model_name_orig = String(n.name)
+    model_name = "model_" * lowercase(model_name_orig)
+    device_type = String(n.typ)
+    va_module = spice_device_type_to_va_module(device_type)
+
+    # Generate type macro: `define model_<name>_type <va_module>
+    println(scope.io, "`define ", model_name, "_type ", va_module)
+
+    # Generate params macro: `define model_<name>_params .PARAM1(val1), .PARAM2(val2), ...
+    print(scope.io, "`define ", model_name, "_params ")
+
+    multiline = should_format_multiline(n.parameters)
+    first_param = true
+    for param in n.parameters
+        if !first_param
+            print(scope.io, ", ")
+        end
+
+        if multiline
+            # Each parameter on its own line for readability
+            # Need backslash continuation for `define directives
+            if !first_param
+                println(scope.io, "\\")
+                print(scope.io, "  ")  # Indent continuation
+            end
+        end
+
+        param_name = uppercase(String(param.name))
+        print(scope.io, ".", param_name, "(")
+
+        if param.val !== nothing
+            scope(param.val)
+        end
+
+        print(scope.io, ")")
+        first_param = false
+    end
+
+    println(scope.io)
+    println(scope.io)  # Extra blank line after macro definitions
+end
+
+# Verilog-A handler for SPICE Subcircuit
+# Generates Verilog-A module with electrical ports and parameter declarations
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Subckt}) where {Sim <: AbstractVerilogASimulator}
+    subckt_name = String(n.name)
+
+    # Create child scope for this module
+    child_scope = create_child_scope(scope)
+
+    # Add subcircuit header parameters to child scope
+    for par in n.parameters
+        param_name_str = String(par.name)
+        param_name_sym = Symbol(lowercase(param_name_str))
+        add_param(child_scope, param_name_sym)
+    end
+
+    # Module header: module <name>(<ports>);
+    print(scope.io, "module ", subckt_name, "(")
+
+    # Collect port names
+    port_names = String[]
+    for node in n.subckt_nodes
+        push!(port_names, String(node))
+    end
+
+    print(scope.io, join(port_names, ", "))
+    println(scope.io, ");")
+
+    # Port direction declarations: inout port1, port2, ...;
+    print(scope.io, "  inout ")
+    println(scope.io, join(port_names, ", "), ";")
+
+    # Electrical discipline declarations: electrical port1, port2, ...;
+    print(scope.io, "  electrical ")
+    println(scope.io, join(port_names, ", "), ";")
+
+    # Parameter declarations from subcircuit header
+    if !isempty(n.parameters)
+        println(scope.io)
+        for par in n.parameters
+            param_name_str = String(par.name)
+            print(scope.io, "  parameter real ", param_name_str, " = ")
+            if par.val !== nothing
+                child_scope(par.val)
+            else
+                print(scope.io, "0")
+            end
+            println(scope.io, ";")
+        end
+    end
+
+    println(scope.io)
+
+    # Body statements (with child scope and increased indent)
+    inner_scope = with_indent(child_scope, 1)
+    for stmt in n.stmts
+        inner_scope(stmt)
+    end
+
+    # End module
+    println(scope.io, "endmodule")
+    println(scope.io)  # Extra blank line after module
+end
+
+# Verilog-A handler for SPICE expression wrappers - convert {expr} and 'expr' to (expr)
+function (scope::CodeGenScope{Sim})(n::SNode{<:Union{SP.Brace, SP.Prime}}) where {Sim <: AbstractVerilogASimulator}
+    print(scope.io, "(")
+    scope(n.inner)
+    print(scope.io, ")")
+end
+
+# Verilog-A handler for SPICE condition expressions
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Condition}) where {Sim <: AbstractVerilogASimulator}
+    print(scope.io, "(")
+    scope(n.body)
+    print(scope.io, ")")
+end
+
+# Verilog-A handler for SPICE .if/.else/.endif blocks
+function (scope::CodeGenScope{Sim})(n::SNode{SP.IfBlock}) where {Sim <: AbstractVerilogASimulator}
+    write_indent(scope)
+    println(scope.io, "generate")
+
+    inner_scope = with_indent(scope, 1)
+
+    for (i, case_node) in enumerate(n.cases)
+        if i == 1
+            # First case - must be .if with condition
+            write_indent(inner_scope)
+            print(scope.io, "if ")
+            scope(case_node.condition)
+            println(scope.io, " begin")
+        elseif case_node.condition !== nothing
+            # Subsequent case with condition - .elseif
+            write_indent(inner_scope)
+            print(scope.io, "end else if ")
+            scope(case_node.condition)
+            println(scope.io, " begin")
+        else
+            # Case without condition - .else
+            write_indent(inner_scope)
+            println(scope.io, "end else begin")
+        end
+
+        # Process statements in this case
+        case_inner_scope = with_indent(inner_scope, 1)
+        for stmt in case_node.stmts
+            case_inner_scope(stmt)
+        end
+    end
+
+    write_indent(inner_scope)
+    println(scope.io, "end")
+    write_indent(scope)
+    println(scope.io, "endgenerate")
+end
+
+# Verilog-A handler for SPICE Resistor
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Resistor}) where {Sim <: AbstractVerilogASimulator}
+    write_indent(scope)
+
+    inst_name = String(n.name)
+    pos_node = String(n.pos)
+    neg_node = String(n.neg)
+
+    # resistor #(.r(<value>)) <name> (<pos>, <neg>);
+    print(scope.io, "resistor #(.r(")
+
+    if n.val !== nothing
+        scope(n.val)
+    end
+
+    print(scope.io, ")) ", inst_name, " (", pos_node, ", ", neg_node, ");")
+    println(scope.io)
+end
+
+# Verilog-A handler for SPICE Capacitor
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Capacitor}) where {Sim <: AbstractVerilogASimulator}
+    write_indent(scope)
+
+    inst_name = String(n.name)
+    pos_node = String(n.pos)
+    neg_node = String(n.neg)
+
+    # capacitor #(.c(<value>)) <name> (<pos>, <neg>);
+    print(scope.io, "capacitor #(.c(")
+
+    if n.val !== nothing
+        scope(n.val)
+    end
+
+    print(scope.io, ")) ", inst_name, " (", pos_node, ", ", neg_node, ");")
+    println(scope.io)
+end
+
+# Verilog-A handler for SPICE Inductor
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Inductor}) where {Sim <: AbstractVerilogASimulator}
+    write_indent(scope)
+
+    inst_name = String(n.name)
+    pos_node = String(n.pos)
+    neg_node = String(n.neg)
+
+    # inductor #(.l(<value>)) <name> (<pos>, <neg>);
+    print(scope.io, "inductor #(.l(")
+
+    if n.val !== nothing
+        scope(n.val)
+    end
+
+    print(scope.io, ")) ", inst_name, " (", pos_node, ", ", neg_node, ");")
+    println(scope.io)
+end
+
+# Verilog-A handler for SPICE Diode
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVerilogASimulator}
+    write_indent(scope)
+
+    inst_name = String(n.name)
+    pos_node = String(n.pos)
+    neg_node = String(n.neg)
+    model_name_orig = String(n.model)
+    model_name = "model_" * lowercase(model_name_orig)
+
+    # `model_<name>_type #(`model_<name>_params) <name> (<pos>, <neg>);
+    print(scope.io, "`", model_name, "_type #(`", model_name, "_params")
+
+    # Add instance parameters if present
+    if !isempty(n.params)
+        for param in n.params
+            print(scope.io, ", ")
+            param_name = lowercase(String(param.name))
+            print(scope.io, ".", param_name, "(")
+
+            if param.val !== nothing
+                scope(param.val)
+            end
+
+            print(scope.io, ")")
+        end
+    end
+
+    print(scope.io, ") ", inst_name, " (", pos_node, ", ", neg_node, ");")
+    println(scope.io)
+end
+
+# Verilog-A handler for SPICE OSDI Device (N prefix - OpenVAF/OSDI models, Y prefix - Xyce ADMS models)
+# Uses model macro convention like Diode but with variable nodes like SubcktCall
+function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: AbstractVerilogASimulator}
+    write_indent(scope)
+
+    inst_name = String(n.name)
+    model_name_orig = String(n.model)
+    model_name = "model_" * lowercase(model_name_orig)
+
+    # Collect node names
+    node_names = String[]
+    for node in n.nodes
+        push!(node_names, String(node))
+    end
+
+    if startswith(lowercase(inst_name), "y")
+        # Xyce OSDI device:
+        # Y<module name> <unique instance name>  <node>* <model name> <instance parameter list>
+        inst_name = popfirst!(node_names)
+    end
+
+    # `model_<name>_type #(`model_<name>_params, .param1(val1), ...) <name> (nodes...);
+    multiline = should_format_multiline(n.parameters)
+
+    print(scope.io, "`", model_name, "_type #(")
+    if multiline
+        println(scope.io)
+        write_indent(scope)
+        print(scope.io, "  `", model_name, "_params")
+    else
+        print(scope.io, "`", model_name, "_params")
+    end
+
+    # Add instance parameters if present
+    if !isempty(n.parameters)
+        for param in n.parameters
+            print(scope.io, ",")
+
+            if multiline
+                println(scope.io)
+                write_indent(scope)
+                print(scope.io, "  ")  # Indent parameters
+            else
+                print(scope.io, " ")
+            end
+
+            param_name = uppercase(String(param.name))
+            print(scope.io, ".", param_name, "(")
+
+            if param.val !== nothing
+                scope(param.val)
+            end
+
+            print(scope.io, ")")
+        end
+    end
+
+    if multiline
+        println(scope.io)
+        write_indent(scope)
+    end
+    print(scope.io, ") ", inst_name, " (", join(node_names, ", "), ");")
+    println(scope.io)
+end
+
+# Verilog-A handler for SPICE Subcircuit Call
+function (scope::CodeGenScope{Sim})(n::SNode{SP.SubcktCall}) where {Sim <: AbstractVerilogASimulator}
+    write_indent(scope)
+
+    inst_name = String(n.name)
+    subckt_name = String(n.model)
+
+    # Collect node names
+    node_names = String[]
+    for node in n.nodes
+        push!(node_names, String(node))
+    end
+
+    # <subckt_name> #(.param1(value1), ...) <inst_name>(<nodes>);
+    print(scope.io, subckt_name)
+
+    # Add parameter overrides if present
+    if !isempty(n.parameters)
+        multiline = should_format_multiline(n.parameters)
+        print(scope.io, " #(")
+
+        first_param = true
+        for param in n.parameters
+            if !first_param
+                print(scope.io, ",")
+            end
+
+            if multiline
+                println(scope.io)
+                write_indent(scope)
+                print(scope.io, "  ")  # Indent parameters
+            else
+                if !first_param
+                    print(scope.io, " ")
+                end
+            end
+
+            param_name = uppercase(String(param.name))
+            print(scope.io, ".", param_name, "(")
+            if param.val !== nothing
+                scope(param.val)
+            end
+            print(scope.io, ")")
+            first_param = false
+        end
+
+        if multiline
+            println(scope.io)
+            write_indent(scope)
+        end
+        print(scope.io, ")")
+    end
+
+    print(scope.io, " ", inst_name, "(")
+    print(scope.io, join(node_names, ", "))
+    print(scope.io, ");")
+
+    println(scope.io)
+end
+
+# Verilog-A handler for SPICE Netlist Source
+# Two-pass approach: first emit includes and model macros, then emit modules
+function (scope::CodeGenScope{Sim})(n::SNode{SP.SPICENetlistSource}) where {Sim <: AbstractVerilogASimulator}
+    # Emit standard Verilog-A includes
+    println(scope.io, "`include \"disciplines.vams\"")
+    println(scope.io)
+
+    # First pass: collect and emit model definitions as macros
+    for stmt in n.stmts
+        if stmt isa SNode{SP.Model}
+            scope(stmt)
+        end
+    end
+
+    # Second pass: emit subcircuits as modules (skip models, titles handled by no-op)
+    for stmt in n.stmts
+        # Skip Model statements (already emitted in first pass)
+        if !(stmt isa SNode{SP.Model})
+            scope(stmt)
+        end
+    end
+end
