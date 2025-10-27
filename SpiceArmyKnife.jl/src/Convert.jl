@@ -155,19 +155,6 @@ function (@main)(ARGS)
         file_size_kb = round(stat(output_file).size / 1024, digits=1)
         println("✓ Successfully wrote $output_file ($(file_size_kb) KB)")
 
-        # Show what changes were applied based on target simulator
-        if output_simulator_sym == :ngspice && output_lang == :spice
-            println("\nNote: Ngspice compatibility conversions applied:")
-            println("  - Removed documentation parameters: iave, vpk, mfg, type, icrating, vceo")
-            println("  - Converted PSPICE temperature parameters (T_ABS→TEMP, T_REL_GLOBAL→DTEMP, T_MEASURED→TNOM)")
-        elseif output_lang == :verilog_a
-            println("\nNote: Verilog-A conversion applied:")
-            println("  - Converted .model cards to `define macros")
-            println("  - Converted .subckt to Verilog-A modules with electrical ports")
-            println("  - Converted magnitude suffixes to exponential notation (1k→1e3, 2.682n→2.682e-9)")
-            println("  - Device instances use primitive modules (resistor, capacitor, inductor, diode)")
-        end
-
         println("=" ^ 80)
         println("✓ CONVERSION COMPLETE")
         println("=" ^ 80)

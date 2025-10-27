@@ -100,10 +100,13 @@ function spice_device_type_to_va_module(device_type::AbstractString)
     device_upper = uppercase(strip(device_type))
 
     mapping = Dict(
-        "D" => "diode",
-        "R" => "resistor",
-        "C" => "capacitor",
-        "L" => "inductor",
+        "D" => "sp_diode",
+        "R" => "sp_resistor",
+        "C" => "sp_capacitor",
+        "L" => "sp_inductor",
+        "NPN" => "sp_bjt",
+        "PNP" => "sp_bjt",
+        "PSP103_VA" => "PSPNQS103VA",
     )
 
     return get(mapping, device_upper, device_upper)
@@ -293,6 +296,28 @@ function (scope::CodeGenScope{Sim})(n::SNode{SC.Identifier}) where {Sim <: Abstr
     end
 end
 
+# Verilog-A handler for SPICE FunctionCall
+function (scope::CodeGenScope{Sim})(n::SNode{SP.FunctionCall}) where {Sim <: AbstractVerilogASimulator}
+    func_name = lowercase(String(n.id))
+
+    if func_name == "gauss" || func_name == "agauss"
+        @warn "gauss does not map cleanly to Verilog, returning nominal value."
+        nom = n.args[1].item
+        scope(nom)
+    else
+        print(scope.io, String(n.id), "(")
+        first_arg = true
+        for arg in n.args
+            if !first_arg
+                print(scope.io, ", ")
+            end
+            scope(arg.item)
+            first_arg = false
+        end
+        print(scope.io, ")")
+    end
+end
+
 # Verilog-A handler for SPICE Model
 # Context-aware: generates paramset at top-level, stores in local database when inside module
 # Prefixes identifiers with 'model_' to avoid naming conflicts (SPICE allows model names starting with digits)
@@ -323,6 +348,19 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractVe
     # Check scope: global generates paramset, nested stores locally
     if is_global_scope(scope)
         # TOP-LEVEL: Generate paramset
+
+        # Emit `include for VA module source file if not already included
+        if va_model.source_file !== nothing
+            included = get!(scope.options, :included_va_files) do
+                Set{String}()
+            end
+
+            if !(va_model.source_file in included)
+                println(scope.io, "`include \"", va_model.source_file, "\"")
+                push!(included, va_model.source_file)
+            end
+        end
+
         println(scope.io, "paramset ", model_name, " ", va_module, ";")
 
         # Generate parameter declarations (use lowercase)
@@ -362,10 +400,9 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractVe
         for param in va_model.parameters
             param_name_lower = lowercase(param.name)
 
-            # Only store parameters that have overrides
+            # Only store parameters that have overrides (store AST node directly)
             if haskey(overrides, param_name_lower)
-                value_str = render_to_string(scope, overrides[param_name_lower])
-                push!(override_params, ModelParameter(param.name, param.ptype, value_str))
+                push!(override_params, ModelParameter(param.name, param.ptype, overrides[param_name_lower]))
             end
         end
 
@@ -504,61 +541,112 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.IfBlock}) where {Sim <: Abstract
     println(scope.io, "endgenerate")
 end
 
-# Verilog-A handler for SPICE Resistor
-function (scope::CodeGenScope{Sim})(n::SNode{SP.Resistor}) where {Sim <: AbstractVerilogASimulator}
+"""
+    spice_two_terminal_device(scope, n, device_type, param_checks, default_param)
+
+Generate Verilog-A code for two-terminal SPICE devices (resistor, capacitor, inductor).
+Handles three cases:
+1. Model reference with parameters - inlines model + instance params
+2. Built-in device with explicit parameters - no model reference
+3. Simple value form - single parameter value
+
+# Arguments
+- `scope`: CodeGenScope for code generation
+- `n`: AST node (SP.Resistor, SP.Capacitor, etc.)
+- `device_type`: VA module name ("resistor", "capacitor", "inductor")
+- `param_checks`: List of parameter names that indicate param-based syntax
+- `default_param`: Parameter name for simple value case ("r", "c", "l")
+"""
+function spice_two_terminal_device(scope::CodeGenScope, n, device_type::String, param_checks::Vector{String}, default_param::String)
     write_indent(scope)
 
     inst_name = String(n.name)
     pos_node = "node_" * String(n.pos)
     neg_node = "node_" * String(n.neg)
 
-    # If params contains r or l, val is the model or nothing
-    if hasparam(n.params, "r") || hasparam(n.params, "l")
-        # val is model name (or nothing = built-in resistor)
+    # Check if params contains any of the specified parameter names
+    has_params = any(param_name -> hasparam(n.params, param_name), param_checks)
+
+    if has_params
+        # val is model name (or nothing = built-in device)
         if n.val !== nothing
-            # Has model reference - must be in local_db
+            # Has model reference - check if it's local or global
             model_name_orig = String(n.val)
             local_db = get(scope.options, :local_models, nothing)
             local_model = local_db !== nothing ? get_model(local_db, model_name_orig) : nothing
 
-            if local_model === nothing
-                error("Resistor $inst_name references undefined model '$model_name_orig'")
-            end
+            if local_model !== nothing
+                # INLINE: Local model found - inline parameters
+                va_models = scope.options[:va_models]
+                va_model = get_model(va_models, device_type)
 
-            # Local model found - inline parameters
-            va_models = scope.options[:va_models]
-            va_model = get_model(va_models, "resistor")
+                # Start with model card's overrides (store AST nodes, not strings)
+                param_dict = Dict{String, Union{String, SNode}}()
+                for param in local_model.parameters
+                    param_dict[param.name] = param.default_value
+                end
 
-            # Start with model card's overrides
-            param_dict = Dict{String, String}()
-            for param in local_model.parameters
-                param_dict[param.name] = param.default_value
-            end
-
-            # Override with instance parameters (looking up correct case from VA model)
-            for param in n.params
-                if param.val !== nothing
-                    param_name_correct = get_param_name(va_model, String(param.name))
-                    if param_name_correct !== nothing
-                        param_dict[param_name_correct] = render_to_string(scope, param.val)
+                # Override with instance parameters (store AST nodes directly)
+                for param in n.params
+                    if param.val !== nothing
+                        param_name_correct = get_param_name(va_model, String(param.name))
+                        if param_name_correct !== nothing
+                            param_dict[param_name_correct] = param.val
+                        end
                     end
                 end
-            end
 
-            # Generate instance with inlined parameters
-            print(scope.io, "resistor #(")
-            first_param = true
-            for (name, value) in param_dict
-                if !first_param
-                    print(scope.io, ", ")
+                # Generate instance with inlined parameters
+                print(scope.io, device_type, " #(")
+                first_param = true
+                for (name, value) in param_dict
+                    if !first_param
+                        print(scope.io, ", ")
+                    end
+                    print(scope.io, ".", lowercase(name), "(")
+                    # Render value (handle both String and SNode)
+                    if value isa String
+                        print(scope.io, value)
+                    else
+                        scope(value)
+                    end
+                    print(scope.io, ")")
+                    first_param = false
                 end
-                print(scope.io, ".", lowercase(name), "(", value, ")")
-                first_param = false
+                print(scope.io, ") ", inst_name, " (", pos_node, ", ", neg_node, ");")
+            else
+                # REFERENCE: Model defined at top-level, use paramset reference
+                model_name = "model_" * lowercase(model_name_orig)
+
+                # model_<name> #(.param1(val1), ...) <name> (<pos>, <neg>);
+                print(scope.io, model_name)
+
+                # Add instance parameters if present
+                if !isempty(n.params)
+                    print(scope.io, " #(")
+                    first_param = true
+                    for param in n.params
+                        if !first_param
+                            print(scope.io, ", ")
+                        end
+                        param_name = lowercase(String(param.name))
+                        print(scope.io, ".", param_name, "(")
+
+                        if param.val !== nothing
+                            scope(param.val)
+                        end
+
+                        print(scope.io, ")")
+                        first_param = false
+                    end
+                    print(scope.io, ")")
+                end
+
+                print(scope.io, " ", inst_name, " (", pos_node, ", ", neg_node, ");")
             end
-            print(scope.io, ") ", inst_name, " (", pos_node, ", ", neg_node, ");")
         else
-            # No model - built-in resistor with parameters
-            print(scope.io, "resistor #(")
+            # No model - built-in device with parameters
+            print(scope.io, device_type, " #(")
             first_param = true
             for param in n.params
                 if !first_param
@@ -574,8 +662,8 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Resistor}) where {Sim <: Abstrac
             print(scope.io, ") ", inst_name, " (", pos_node, ", ", neg_node, ");")
         end
     else
-        # val is the resistance value
-        print(scope.io, "resistor #(.r(")
+        # val is the parameter value
+        print(scope.io, device_type, " #(.", default_param, "(")
         if n.val !== nothing
             scope(n.val)
         end
@@ -584,42 +672,19 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Resistor}) where {Sim <: Abstrac
     println(scope.io)
 end
 
+# Verilog-A handler for SPICE Resistor
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Resistor}) where {Sim <: AbstractVerilogASimulator}
+    spice_two_terminal_device(scope, n, "resistor", ["r", "l"], "r")
+end
+
 # Verilog-A handler for SPICE Capacitor
 function (scope::CodeGenScope{Sim})(n::SNode{SP.Capacitor}) where {Sim <: AbstractVerilogASimulator}
-    write_indent(scope)
-
-    inst_name = String(n.name)
-    pos_node = "node_" * String(n.pos)
-    neg_node = "node_" * String(n.neg)
-
-    # capacitor #(.c(<value>)) <name> (<pos>, <neg>);
-    print(scope.io, "capacitor #(.c(")
-
-    if n.val !== nothing
-        scope(n.val)
-    end
-
-    print(scope.io, ")) ", inst_name, " (", pos_node, ", ", neg_node, ");")
-    println(scope.io)
+    spice_two_terminal_device(scope, n, "capacitor", ["c", "l", "w"], "c")
 end
 
 # Verilog-A handler for SPICE Inductor
 function (scope::CodeGenScope{Sim})(n::SNode{SP.Inductor}) where {Sim <: AbstractVerilogASimulator}
-    write_indent(scope)
-
-    inst_name = String(n.name)
-    pos_node = "node_" * String(n.pos)
-    neg_node = "node_" * String(n.neg)
-
-    # inductor #(.l(<value>)) <name> (<pos>, <neg>);
-    print(scope.io, "inductor #(.l(")
-
-    if n.val !== nothing
-        scope(n.val)
-    end
-
-    print(scope.io, ")) ", inst_name, " (", pos_node, ", ", neg_node, ");")
-    println(scope.io)
+    spice_two_terminal_device(scope, n, "inductor", ["l"], "l")
 end
 
 # Verilog-A handler for SPICE Diode
@@ -646,19 +711,19 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVe
         va_models = scope.options[:va_models]
         va_model = get_model(va_models, va_module)
 
-        # Start with model card's overrides
-        param_dict = Dict{String, String}()
+        # Start with model card's overrides (store AST nodes, not strings)
+        param_dict = Dict{String, Union{String, SNode}}()
         for param in local_model.parameters
             param_dict[param.name] = param.default_value
         end
 
-        # Override with instance parameters (looking up correct case from VA model)
+        # Override with instance parameters (store AST nodes directly)
         for param in n.params
             if param.val !== nothing
                 # Get correct case from VA model
                 param_name_correct = get_param_name(va_model, String(param.name))
                 if param_name_correct !== nothing
-                    param_dict[param_name_correct] = render_to_string(scope, param.val)
+                    param_dict[param_name_correct] = param.val
                 end
             end
         end
@@ -672,7 +737,14 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVe
                 if !first_param
                     print(scope.io, ", ")
                 end
-                print(scope.io, ".", param_name, "(", param_value, ")")
+                print(scope.io, ".", param_name, "(")
+                # Render value (handle both String and SNode)
+                if param_value isa String
+                    print(scope.io, param_value)
+                else
+                    scope(param_value)
+                end
+                print(scope.io, ")")
                 first_param = false
             end
             print(scope.io, ")")
@@ -706,6 +778,116 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVe
         end
 
         print(scope.io, " ", inst_name, " (", pos_node, ", ", neg_node, ");")
+    end
+
+    println(scope.io)
+end
+
+# Verilog-A handler for SPICE Bipolar Transistor (BJT)
+function (scope::CodeGenScope{Sim})(n::SNode{SP.BipolarTransistor}) where {Sim <: AbstractVerilogASimulator}
+    write_indent(scope)
+
+    inst_name = String(n.name)
+    collector_node = "node_" * String(n.c)
+    base_node = "node_" * String(n.b)
+    emitter_node = "node_" * String(n.e)
+    substrate_node = n.s !== nothing ? "node_" * String(n.s) : nothing
+
+    model_name_orig = String(n.model)
+    model_name = "model_" * lowercase(model_name_orig)
+
+    # Check if model is defined locally (inside module)
+    local_db = get(scope.options, :local_models, nothing)
+    local_model = local_db !== nothing ? get_model(local_db, model_name) : nothing
+
+    if local_model !== nothing
+        # INLINE: Model defined locally, merge parameters directly
+
+        # va_module is stored directly in ModelDefinition.name
+        va_module = local_model.name
+
+        # Get full VA model for case-correct parameter lookup
+        va_models = scope.options[:va_models]
+        va_model = get_model(va_models, va_module)
+
+        # Start with model card's overrides (store AST nodes, not strings)
+        param_dict = Dict{String, Union{String, SNode}}()
+        for param in local_model.parameters
+            param_dict[param.name] = param.default_value
+        end
+
+        # Override with instance parameters (store AST nodes directly)
+        for param in n.params
+            if param.val !== nothing
+                # Get correct case from VA model
+                param_name_correct = get_param_name(va_model, String(param.name))
+                if param_name_correct !== nothing
+                    param_dict[param_name_correct] = param.val
+                end
+            end
+        end
+
+        # Generate: va_module #(.param1(val1), ...) inst_name (c, b, e[, s]);
+        print(scope.io, va_module)
+        if !isempty(param_dict)
+            print(scope.io, " #(")
+            first_param = true
+            for (param_name, param_value) in param_dict
+                if !first_param
+                    print(scope.io, ", ")
+                end
+                print(scope.io, ".", param_name, "(")
+                # Render value (handle both String and SNode)
+                if param_value isa String
+                    print(scope.io, param_value)
+                else
+                    scope(param_value)
+                end
+                print(scope.io, ")")
+                first_param = false
+            end
+            print(scope.io, ")")
+        end
+
+        # Print nodes (c, b, e, and optional s)
+        print(scope.io, " ", inst_name, " (", collector_node, ", ", base_node, ", ", emitter_node)
+        if substrate_node !== nothing
+            print(scope.io, ", ", substrate_node)
+        end
+        print(scope.io, ");")
+    else
+        # REFERENCE: Model defined at top-level, use paramset reference
+
+        # model_<name> #(.param1(val1), ...) <name> (c, b, e[, s]);
+        print(scope.io, model_name)
+
+        # Add instance parameters if present
+        if !isempty(n.params)
+            print(scope.io, " #(")
+            first_param = true
+            for param in n.params
+                if !first_param
+                    print(scope.io, ", ")
+                end
+                param_name = lowercase(String(param.name))
+                print(scope.io, ".", param_name, "(")
+
+                if param.val !== nothing
+                    scope(param.val)
+                end
+
+                print(scope.io, ")")
+                first_param = false
+            end
+            print(scope.io, ")")
+        end
+
+        # Print nodes (c, b, e, and optional s)
+        print(scope.io, " ", inst_name, " (", collector_node, ", ", base_node, ", ", emitter_node)
+        if substrate_node !== nothing
+            print(scope.io, ", ", substrate_node)
+        end
+        print(scope.io, ");")
     end
 
     println(scope.io)
@@ -747,19 +929,19 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
         va_models = scope.options[:va_models]
         va_model = get_model(va_models, va_module)
 
-        # Start with model card's overrides
-        param_dict = Dict{String, String}()
+        # Start with model card's overrides (store AST nodes, not strings)
+        param_dict = Dict{String, Union{String, SNode}}()
         for param in local_model.parameters
             param_dict[param.name] = param.default_value
         end
 
-        # Override with instance parameters (looking up correct case from VA model)
+        # Override with instance parameters (store AST nodes directly)
         for param in n.parameters
             if param.val !== nothing
                 # Get correct case from VA model
                 param_name_correct = get_param_name(va_model, String(param.name))
                 if param_name_correct !== nothing
-                    param_dict[param_name_correct] = render_to_string(scope, param.val)
+                    param_dict[param_name_correct] = param.val
                 end
             end
         end
@@ -786,7 +968,14 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
                     end
                 end
 
-                print(scope.io, ".", param_name, "(", param_value, ")")
+                print(scope.io, ".", param_name, "(")
+                # Render value (handle both String and SNode)
+                if param_value isa String
+                    print(scope.io, param_value)
+                else
+                    scope(param_value)
+                end
+                print(scope.io, ")")
                 first_param = false
             end
 

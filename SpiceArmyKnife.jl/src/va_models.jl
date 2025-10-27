@@ -23,12 +23,12 @@ Represents a parameter in a Verilog-A model with its type and default value.
 Fields:
 - `name::String`: Parameter name with original case preserved
 - `ptype::String`: Parameter type (e.g., "real", "integer")
-- `default_value::String`: Default value as Verilog-A string representation
+- `default_value::Union{String, SNode}`: Default value - String (from VA model) or SNode (from SPICE override)
 """
 struct ModelParameter
     name::String
     ptype::String
-    default_value::String
+    default_value::Union{String, SNode}
 end
 
 """
@@ -40,24 +40,26 @@ Fields:
 - `name::String`: Model name with original case preserved
 - `parameters::Vector{ModelParameter}`: Parameters in declaration order
 - `param_lookup::Dict{Symbol, Int}`: Case-insensitive lookup (lowercase → index)
+- `source_file::Union{String, Nothing}`: Source VA file basename (e.g., "sp_resistor.va")
 """
 struct ModelDefinition
     name::String
     parameters::Vector{ModelParameter}
     param_lookup::Dict{Symbol, Int}
+    source_file::Union{String, Nothing}
 end
 
 """
-    ModelDefinition(name::String, parameters::Vector{ModelParameter})
+    ModelDefinition(name::String, parameters::Vector{ModelParameter}, source_file::Union{String, Nothing}=nothing)
 
 Constructor that automatically builds the case-insensitive parameter lookup.
 """
-function ModelDefinition(name::String, parameters::Vector{ModelParameter})
+function ModelDefinition(name::String, parameters::Vector{ModelParameter}, source_file::Union{String, Nothing}=nothing)
     param_lookup = Dict{Symbol, Int}()
     for (i, param) in enumerate(parameters)
         param_lookup[Symbol(lowercase(param.name))] = i
     end
-    ModelDefinition(name, parameters, param_lookup)
+    ModelDefinition(name, parameters, param_lookup, source_file)
 end
 
 """
@@ -155,14 +157,17 @@ function extract_model_definitions(filepath::String)
 
     models = ModelDefinition[]
 
+    # Store just the basename for use in `include directives
+    source_basename = basename(filepath)
+
     # Walk through top-level statements looking for modules
     for stmt in va.stmts
         if isa(stmt, Node{VerilogModule})
             module_name = String(stmt.id)
             parameters = extract_module_parameters(stmt)
 
-            # Create model definition
-            model = ModelDefinition(module_name, parameters)
+            # Create model definition with source file tracking
+            model = ModelDefinition(module_name, parameters, source_basename)
             push!(models, model)
         end
     end
