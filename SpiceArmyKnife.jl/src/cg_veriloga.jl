@@ -597,12 +597,25 @@ function spice_two_terminal_device(scope::CodeGenScope, n, device_type::String, 
                 end
 
                 # Generate instance with inlined parameters
+                multiline = should_format_multiline(param_dict)
                 print(scope.io, device_type, " #(")
+
                 first_param = true
                 for (name, value) in param_dict
                     if !first_param
-                        print(scope.io, ", ")
+                        print(scope.io, ",")
                     end
+
+                    if multiline
+                        println(scope.io)
+                        write_indent(scope)
+                        print(scope.io, "  ")
+                    else
+                        if !first_param
+                            print(scope.io, " ")
+                        end
+                    end
+
                     print(scope.io, ".", lowercase(name), "(")
                     # Render value (handle both String and SNode)
                     if value isa String
@@ -612,6 +625,11 @@ function spice_two_terminal_device(scope::CodeGenScope, n, device_type::String, 
                     end
                     print(scope.io, ")")
                     first_param = false
+                end
+
+                if multiline
+                    println(scope.io)
+                    write_indent(scope)
                 end
                 print(scope.io, ") ", inst_name, " (", pos_node, ", ", neg_node, ");")
             else
@@ -731,12 +749,25 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVe
         # Generate: va_module #(.param1(val1), ...) inst_name (pos, neg);
         print(scope.io, va_module)
         if !isempty(param_dict)
+            multiline = should_format_multiline(param_dict)
             print(scope.io, " #(")
+
             first_param = true
             for (param_name, param_value) in param_dict
                 if !first_param
-                    print(scope.io, ", ")
+                    print(scope.io, ",")
                 end
+
+                if multiline
+                    println(scope.io)
+                    write_indent(scope)
+                    print(scope.io, "  ")
+                else
+                    if !first_param
+                        print(scope.io, " ")
+                    end
+                end
+
                 print(scope.io, ".", param_name, "(")
                 # Render value (handle both String and SNode)
                 if param_value isa String
@@ -746,6 +777,11 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVe
                 end
                 print(scope.io, ")")
                 first_param = false
+            end
+
+            if multiline
+                println(scope.io)
+                write_indent(scope)
             end
             print(scope.io, ")")
         end
@@ -792,6 +828,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.BipolarTransistor}) where {Sim <
     base_node = "node_" * String(n.b)
     emitter_node = "node_" * String(n.e)
     substrate_node = n.s !== nothing ? "node_" * String(n.s) : nothing
+    temp_node = n.t !== nothing ? "node_" * String(n.t) : nothing
 
     model_name_orig = String(n.model)
     model_name = "model_" * lowercase(model_name_orig)
@@ -827,15 +864,28 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.BipolarTransistor}) where {Sim <
             end
         end
 
-        # Generate: va_module #(.param1(val1), ...) inst_name (c, b, e[, s]);
+        # Generate: va_module #(.param1(val1), ...) inst_name (c, b, e[, s][, t]);
         print(scope.io, va_module)
         if !isempty(param_dict)
+            multiline = should_format_multiline(param_dict)
             print(scope.io, " #(")
+
             first_param = true
             for (param_name, param_value) in param_dict
                 if !first_param
-                    print(scope.io, ", ")
+                    print(scope.io, ",")
                 end
+
+                if multiline
+                    println(scope.io)
+                    write_indent(scope)
+                    print(scope.io, "  ")
+                else
+                    if !first_param
+                        print(scope.io, " ")
+                    end
+                end
+
                 print(scope.io, ".", param_name, "(")
                 # Render value (handle both String and SNode)
                 if param_value isa String
@@ -846,29 +896,50 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.BipolarTransistor}) where {Sim <
                 print(scope.io, ")")
                 first_param = false
             end
+
+            if multiline
+                println(scope.io)
+                write_indent(scope)
+            end
             print(scope.io, ")")
         end
 
-        # Print nodes (c, b, e, and optional s)
+        # Print nodes (c, b, e, and optional s, t)
         print(scope.io, " ", inst_name, " (", collector_node, ", ", base_node, ", ", emitter_node)
         if substrate_node !== nothing
             print(scope.io, ", ", substrate_node)
+        end
+        if temp_node !== nothing
+            print(scope.io, ", ", temp_node)
         end
         print(scope.io, ");")
     else
         # REFERENCE: Model defined at top-level, use paramset reference
 
-        # model_<name> #(.param1(val1), ...) <name> (c, b, e[, s]);
+        # model_<name> #(.param1(val1), ...) <name> (c, b, e[, s][, t]);
         print(scope.io, model_name)
 
         # Add instance parameters if present
         if !isempty(n.params)
+            multiline = should_format_multiline(n.params)
             print(scope.io, " #(")
+
             first_param = true
             for param in n.params
                 if !first_param
-                    print(scope.io, ", ")
+                    print(scope.io, ",")
                 end
+
+                if multiline
+                    println(scope.io)
+                    write_indent(scope)
+                    print(scope.io, "  ")  # Indent parameters
+                else
+                    if !first_param
+                        print(scope.io, " ")
+                    end
+                end
+
                 param_name = lowercase(String(param.name))
                 print(scope.io, ".", param_name, "(")
 
@@ -879,13 +950,21 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.BipolarTransistor}) where {Sim <
                 print(scope.io, ")")
                 first_param = false
             end
+
+            if multiline
+                println(scope.io)
+                write_indent(scope)
+            end
             print(scope.io, ")")
         end
 
-        # Print nodes (c, b, e, and optional s)
+        # Print nodes (c, b, e, and optional s, t)
         print(scope.io, " ", inst_name, " (", collector_node, ", ", base_node, ", ", emitter_node)
         if substrate_node !== nothing
             print(scope.io, ", ", substrate_node)
+        end
+        if temp_node !== nothing
+            print(scope.io, ", ", temp_node)
         end
         print(scope.io, ");")
     end
@@ -949,7 +1028,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
         # Generate: va_module #(.param1(val1), ...) inst_name (nodes...);
         print(scope.io, va_module)
         if !isempty(param_dict)
-            multiline = should_format_multiline(n.parameters)
+            multiline = should_format_multiline(param_dict)
             print(scope.io, " #(")
 
             first_param = true

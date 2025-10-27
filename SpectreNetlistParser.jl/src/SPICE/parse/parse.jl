@@ -1034,25 +1034,25 @@ function parse_bipolar_transistor(ps)
     @trynext c = parse_hierarchial_node(ps)
     @trynext b = parse_hierarchial_node(ps)
     @trynext e = parse_hierarchial_node(ps)
-    kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, c, b, e)
-    @trynext s = parse_hierarchial_node(ps) # or model
-    kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, c, b, e, s)
-    if is_ident(kind(nt(ps)))
-        if kind(nnt(ps)) == EQ
-            model = s
-            s = nothing
-            @trynext params = parse_parameter_list(ps)
-        else
-            @trynext model = parse_hierarchial_node(ps)
-            @trynext params = parse_parameter_list(ps)
-        end
+    optional = EXPR{HierarchialNode}[]
+    # [s] [t] model
+    for _ in 1:3
+        @trynext o = parse_hierarchial_node(ps)
+        push!(optional, o)
+        kind(nt(ps)) == JULIA_ESCAPE_BEGIN && return parse_julia_device(ps, name, c, b, e, optional...)
+        is_ident(kind(nt(ps))) || break
+        kind(nnt(ps)) == EQ && break
+    end
+    model = pop!(optional)
+    s = get(optional, 1, nothing)
+    t = get(optional, 2, nothing)
+    if is_ident(kind(nt(ps))) && kind(nnt(ps)) == EQ
+        @trynext params = parse_parameter_list(ps)
     else
-        model = s
-        s = nothing
         params = EXPRList{Parameter}()
     end
     @trynext nl = accept_newline(ps)
-    return EXPR(BipolarTransistor(name, c, b, e, s, model, params, nl))
+    return EXPR(BipolarTransistor(name, c, b, e, s, t, model, params, nl))
 end
 
 function parse_capacitor(ps)

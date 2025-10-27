@@ -381,6 +381,7 @@ struct BipolarTransistor <: AbstractInstanceNode
     b::EXPR{HierarchialNode}
     e::EXPR{HierarchialNode}
     s::Union{Nothing, EXPR{HierarchialNode}}
+    t::Union{Nothing, EXPR{HierarchialNode}}
     model::EXPR{HierarchialNode}
     params::EXPRList{Parameter}
     nl::EXPR{Notation}
