@@ -222,6 +222,36 @@ function temperature_param_mapping(::Xyce)
 end
 
 # =============================================================================
+# Operator Replacement Trait
+# =============================================================================
+
+"""
+    operator_replacement(simulator::AbstractSimulator, op::String) -> Tuple{Symbol, String}
+
+Returns how to emit an operator for a specific simulator.
+
+Returns a tuple of (emission_type, replacement):
+- `(:operator, "**")` - emit as infix operator (default, no conversion)
+- `(:operator, "^")` - replace with different infix operator
+- `(:function, "pow")` - replace with function call
+
+Default: `(:operator, op)` - return input unchanged
+
+This trait allows simulators to specify operator conversions. For example, gnucap does not
+support the `**` power operator and requires `pow(x, y)` function calls instead.
+
+Example:
+```julia
+operator_replacement(Gnucap(), "**")  # => (:function, "pow")
+operator_replacement(Ngspice(), "**") # => (:operator, "**")  # no conversion
+```
+"""
+operator_replacement(::AbstractSimulator, op::String) = (:operator, op)
+
+# Gnucap does NOT support ** operator, requires pow() function
+operator_replacement(::Gnucap, op::String) = op == "**" ? (:function, "pow") : (:operator, op)
+
+# =============================================================================
 # Helper Functions
 # =============================================================================
 

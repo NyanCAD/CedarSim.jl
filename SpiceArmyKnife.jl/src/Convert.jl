@@ -129,7 +129,7 @@ function (@main)(ARGS)
                 end
             end
             merged_db = merge_model_databases(dbs)
-            println("  ✓ Extracted $(length(merged_db.models)) model(s)")
+            println("  ✓ Extracted $(length(merged_db.models)) model(s): $(join(keys(merged_db.model_lookup), ", "))")
             merged_db
         else
             ModelDatabase([], Dict{Symbol, Int}())

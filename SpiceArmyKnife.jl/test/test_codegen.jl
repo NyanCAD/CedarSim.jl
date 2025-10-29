@@ -194,6 +194,66 @@ I1 (n1 n2 vdd gnd) inv
                 @test occursin("DTEMP=5", output)
             end
         end
+
+        @testset "Operator conversion" begin
+            @testset "gnucap converts ** to pow()" begin
+                # Gnucap does not support ** operator, requires pow() function
+                spice = ".param x={2**3}\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, Gnucap())
+
+                # Should convert ** to pow()
+                @test occursin("pow(2, 3)", output)
+                @test !occursin("**", output)
+            end
+
+            @testset "ngspice preserves ** operator" begin
+                # Ngspice supports ** operator natively
+                spice = ".param x={2**3}\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, Ngspice())
+
+                # Should preserve ** operator
+                @test occursin("**", output)
+                @test !occursin("pow(", output)
+            end
+
+            @testset "gnucap converts ** in complex expressions" begin
+                # Test ** conversion in nested expressions
+                spice = ".param y={(a+b)**2}\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, Gnucap())
+
+                # Should convert ** to pow()
+                # Note: Gnucap is Verilog-A based, so identifiers get backticks
+                @test occursin("pow(", output)
+                @test !occursin("**", output)
+            end
+
+            @testset "gnucap preserves other operators" begin
+                # Test that other operators are not affected
+                spice = ".param z={a+b*c/d}\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, Gnucap())
+
+                # Should preserve all operators
+                @test occursin("+", output)
+                @test occursin("*", output)
+                @test occursin("/", output)
+            end
+
+            @testset "gnucap converts multiple ** operators" begin
+                # Test expression with multiple power operations
+                spice = ".param w={2**3 + 4**5}\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, Gnucap())
+
+                # Both ** should be converted to pow()
+                @test occursin("pow(2, 3)", output)
+                @test occursin("pow(4, 5)", output)
+                @test !occursin("**", output)
+            end
+        end
     end
 
     @testset "SPICE Subcircuits" begin
@@ -379,6 +439,137 @@ X1 a b gnd rc_filter
             # Check for braced expression (may have spaces from expression handler)
             @test occursin(r"\{2\s*\*\s*3\.14\}", output)
             @test occursin("{test_val}", output)
+        end
+    end
+
+    @testset "Device Type to VA Module Mapping" begin
+        @testset "BJT level mappings" begin
+            @testset "Default Gummel-Poon (no level)" begin
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NPN")
+                @test name == "sp_bjt"
+                @test params[:type] == 1
+            end
+
+            @testset "NPN vs PNP polarity" begin
+                name_npn, params_npn = SpiceArmyKnife.spice_device_type_to_va_module("NPN")
+                @test params_npn[:type] == 1
+
+                name_pnp, params_pnp = SpiceArmyKnife.spice_device_type_to_va_module("PNP")
+                @test params_pnp[:type] == -1
+            end
+
+            @testset "Level 1 Gummel-Poon" begin
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NPN", 1)
+                @test name == "sp_bjt"
+                @test params[:type] == 1
+            end
+
+            @testset "ngspice VBIC levels" begin
+                # Level 4
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NPN", 4; input_dialect=:ngspice)
+                @test name == "vbic_4T_et_cf"
+                @test params[:type] == 1
+
+                # Level 9
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("PNP", 9; input_dialect=:ngspice)
+                @test name == "vbic_4T_et_cf"
+                @test params[:type] == -1
+            end
+
+            @testset "Xyce VBIC levels" begin
+                # Level 11
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NPN", 11; input_dialect=:xyce)
+                @test name == "vbic_4T_et_cf"
+                @test params[:type] == 1
+
+                # Level 12
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("PNP", 12; input_dialect=:xyce)
+                @test name == "vbic_4T_et_cf"
+                @test params[:type] == -1
+            end
+
+            @testset "Unsupported BJT level errors" begin
+                @test_throws ErrorException SpiceArmyKnife.spice_device_type_to_va_module("NPN", 99)
+                @test_throws ErrorException SpiceArmyKnife.spice_device_type_to_va_module("NPN", 4; input_dialect=:xyce)
+            end
+        end
+
+        @testset "MOSFET level mappings" begin
+            @testset "BSIM4 (level 14, 54)" begin
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NMOS", 14)
+                @test name == "bsim4"
+                @test params[:TYPE] == 1
+
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("PMOS", 54)
+                @test name == "bsim4"
+                @test params[:TYPE] == -1
+            end
+
+            @testset "BSIM3 (level 8, 49)" begin
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NMOS", 8)
+                @test name == "bsim3"
+                @test params[:TYPE] == 1
+
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("PMOS", 49)
+                @test name == "bsim3"
+                @test params[:TYPE] == -1
+            end
+
+            @testset "BSIMCMG (level 17, 72)" begin
+                # Default version (107)
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NMOS", 17)
+                @test name == "bsimcmg107"
+                @test params[:DEVTYPE] == 1
+
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("PMOS", 72, "107")
+                @test name == "bsimcmg107"
+                @test params[:DEVTYPE] == 0
+            end
+
+            @testset "MOSFET without level errors" begin
+                @test_throws ErrorException SpiceArmyKnife.spice_device_type_to_va_module("NMOS")
+            end
+
+            @testset "Unsupported MOSFET level errors" begin
+                @test_throws ErrorException SpiceArmyKnife.spice_device_type_to_va_module("NMOS", 99)
+            end
+
+            @testset "Unsupported BSIMCMG version errors" begin
+                @test_throws ErrorException SpiceArmyKnife.spice_device_type_to_va_module("NMOS", 17, "200")
+            end
+        end
+
+        @testset "Passive devices" begin
+            @testset "Resistor" begin
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("R")
+                @test name == "sp_resistor"
+                @test isempty(params)
+            end
+
+            @testset "Capacitor" begin
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("C")
+                @test name == "sp_capacitor"
+                @test isempty(params)
+            end
+
+            @testset "Inductor" begin
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("L")
+                @test name == "sp_inductor"
+                @test isempty(params)
+            end
+
+            @testset "Diode" begin
+                name, params = SpiceArmyKnife.spice_device_type_to_va_module("D")
+                @test name == "sp_diode"
+                @test isempty(params)
+            end
+        end
+
+        @testset "Case insensitivity" begin
+            name_upper, params_upper = SpiceArmyKnife.spice_device_type_to_va_module("NPN", 9)
+            name_lower, params_lower = SpiceArmyKnife.spice_device_type_to_va_module("npn", 9)
+            @test name_upper == name_lower
+            @test params_upper == params_lower
         end
     end
 

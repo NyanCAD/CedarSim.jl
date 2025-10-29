@@ -266,7 +266,7 @@ uuid = "72c5b8b4-6eac-4a9c-9647-0f5a982ce801"
 version = "0.6.1"
 
 [[deps.SpiceArmyKnife]]
-deps = ["ArgParse", "Downloads", "HTTP", "JSON", "Lexers", "SpectreNetlistParser", "StringEncodings", "UUIDs", "p7zip_jll"]
+deps = ["ArgParse", "Downloads", "HTTP", "JSON", "Lexers", "SpectreNetlistParser", "StringEncodings", "UUIDs", "VerilogAParser", "p7zip_jll"]
 path = "."
 uuid = "9bd5f295-a833-4c5a-8e17-8bae7b000705"
 version = "0.1.0"
@@ -336,6 +336,8 @@ version = "0.3.4"
 [[deps.VerilogAParser]]
 deps = ["AbstractTrees", "Artifacts", "Lexers", "SnoopPrecompile", "VT100"]
 path = "../VerilogAParser.jl"
+repo-subdir = "VerilogAParser.jl"
+repo-url = "https://github.com/NyanCAD/SpiceArmyKnife.jl"
 uuid = "b333aca1-b97d-47c9-9908-8e5a8c115e58"
 version = "0.3.1"
 

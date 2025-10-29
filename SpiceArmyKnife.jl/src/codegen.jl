@@ -247,10 +247,23 @@ end
 # =============================================================================
 
 # Binary expressions: +, -, *, /, **, etc.
-function (scope::CodeGenScope)(n::SNode{<:Union{SC.BinaryExpression, SP.BinaryExpression}})
-    scope(n.lhs)
-    print(scope.io, " ", String(n.op), " ")
-    scope(n.rhs)
+function (scope::CodeGenScope{Sim})(n::SNode{<:Union{SC.BinaryExpression, SP.BinaryExpression}}) where {Sim}
+    op_str = String(n.op)
+    emission_type, replacement = operator_replacement(Sim(), op_str)
+
+    if emission_type == :function
+        # Emit as function call: pow(x, y)
+        print(scope.io, replacement, "(")
+        scope(n.lhs)
+        print(scope.io, ", ")
+        scope(n.rhs)
+        print(scope.io, ")")
+    else
+        # Emit as infix operator: x ** y
+        scope(n.lhs)
+        print(scope.io, " ", replacement, " ")
+        scope(n.rhs)
+    end
 end
 
 # Unary expressions: -, +, !, ~
@@ -465,5 +478,5 @@ include("cg_veriloga.jl")
 # Export simulator types and traits from this module
 export AbstractSimulator, AbstractSpiceSimulator, AbstractSpectreSimulator, AbstractVerilogASimulator
 export Ngspice, Hspice, Pspice, Xyce, SpectreADE, OpenVAF, Gnucap
-export language, hasdocprops, doc_only_params, temperature_param_mapping
+export language, hasdocprops, doc_only_params, temperature_param_mapping, operator_replacement
 export symbol_from_simulator, simulator_from_symbol
