@@ -328,26 +328,21 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.ParamStatement}) where {Sim <: A
         # Track parameter in current scope
         add_param(scope, param_name_sym)
 
+        # Warn if parameter has no value (unusual in .param statements)
+        if param.val === nothing
+            @warn "Parameter '$param_name_str' has no value in .param statement - defaulting to 0" maxlog=1
+        end
+
         if is_global_scope(scope)
             # Top-level: emit `define macro
             print(scope.io, "`define ", param_name_str, " ")
-            if param.val !== nothing
-                scope(param.val)
-            else
-                # Parameter without value - default to 1
-                print(scope.io, "1")
-            end
+            scope(param.val === nothing ? "0" : param.val)
             println(scope.io)
         else
             # Module-level: emit parameter declaration
             write_indent(scope)
             print(scope.io, "parameter real ", param_name_str, " = ")
-            if param.val !== nothing
-                scope(param.val)
-            else
-                # Parameter without value - default to 0
-                print(scope.io, "0")
-            end
+            scope(param.val === nothing ? "0" : param.val)
             println(scope.io, ";")
         end
     end
@@ -389,10 +384,122 @@ end
 function (scope::CodeGenScope{Sim})(n::SNode{SP.FunctionCall}) where {Sim <: AbstractVerilogASimulator}
     func_name = lowercase(String(n.id))
 
-    if func_name == "gauss" || func_name == "agauss"
-        @warn "gauss does not map cleanly to Verilog, returning nominal value."
-        nom = n.args[1].item
-        scope(nom)
+    if func_name == "gauss"
+        # GAUSS(μ, α, n) - Gaussian variation with relative std dev
+        # Returns: N(μ, (α*μ)/n) - a random number from normal distribution
+        #
+        # Xyce: GAUSS(μ, α, n=1.1) → N(μ, (α*μ)/n)
+        # ngspice: gauss(nom, rvar, sigma) → nom + (nom*rvar/sigma)*N(0,1)
+        #          with defaults v=1.0, w=0.0 for missing args
+        #          Special case: if rvar <= 0 || sigma <= 0, return nom
+
+        input_dialect = get(scope.options, :spice_dialect, :ngspice)
+        nargs = length(n.args)
+
+        # Parse arguments based on dialect (assign defaults directly)
+        local mu_arg, var_arg, n_arg
+        if input_dialect == :xyce
+            # Xyce: GAUSS(μ, α, n=1)
+            if nargs < 2 || nargs > 3
+                error("Xyce GAUSS() requires 2-3 arguments: μ, α, [n=1]")
+            end
+            mu_arg = n.args[1].item
+            var_arg = n.args[2].item
+            n_arg = nargs == 3 ? n.args[3].item : 1
+        else
+            # ngspice: gauss(nom, rvar, sigma)
+            if nargs < 1 || nargs > 3
+                error("ngspice gauss() requires 1-3 arguments: [nom=1.0, [rvar=0.0,]] sigma")
+            end
+            if nargs == 1
+                mu_arg = 1.0
+                var_arg = 0.0
+                n_arg = n.args[1].item
+            elseif nargs == 2
+                mu_arg = n.args[1].item
+                var_arg = 0.0
+                n_arg = n.args[2].item
+            else
+                mu_arg = n.args[1].item
+                var_arg = n.args[2].item
+                n_arg = n.args[3].item
+            end
+        end
+
+        # Generate: (var <= 0 || n <= 0) ? μ : $rdist_normal(_rdist_seed, μ, (var*μ)/n)
+        print(scope.io, "((")
+        scope(var_arg)
+        print(scope.io, " <= 0) || (")
+        scope(n_arg)
+        print(scope.io, " <= 0) ? ")
+        scope(mu_arg)
+        print(scope.io, " : \$rdist_normal(_rdist_seed, ")
+        scope(mu_arg)
+        print(scope.io, ", (")
+        scope(var_arg)
+        print(scope.io, " * ")
+        scope(mu_arg)
+        print(scope.io, ") / ")
+        scope(n_arg)
+        print(scope.io, "))")
+
+    elseif func_name == "agauss"
+        # AGAUSS(μ, α, n) - Gaussian variation with absolute std dev
+        # Returns: N(μ, α/n) - a random number from normal distribution
+        #
+        # Xyce: AGAUSS(μ, α, n=1) → N(μ, α/n)
+        # ngspice: agauss(nom, avar, sigma) → nom + (avar/sigma)*N(0,1)
+        #          with defaults v=1.0, w=0.0 for missing args
+        #          Special case: if avar <= 0 || sigma <= 0, return nom
+
+        input_dialect = get(scope.options, :spice_dialect, :ngspice)
+        nargs = length(n.args)
+
+        # Parse arguments based on dialect (assign defaults directly)
+        local mu_arg, var_arg, n_arg
+        if input_dialect == :xyce
+            # Xyce: AGAUSS(μ, α, n=1)
+            if nargs < 2 || nargs > 3
+                error("Xyce AGAUSS() requires 2-3 arguments: μ, α, [n=1]")
+            end
+            mu_arg = n.args[1].item
+            var_arg = n.args[2].item
+            n_arg = nargs == 3 ? n.args[3].item : 1
+        else
+            # ngspice: agauss(nom, avar, sigma)
+            if nargs < 1 || nargs > 3
+                error("ngspice agauss() requires 1-3 arguments: [nom=1.0, [avar=0.0,]] sigma")
+            end
+            if nargs == 1
+                mu_arg = 1.0
+                var_arg = 0.0
+                n_arg = n.args[1].item
+            elseif nargs == 2
+                mu_arg = n.args[1].item
+                var_arg = 0.0
+                n_arg = n.args[2].item
+            else
+                mu_arg = n.args[1].item
+                var_arg = n.args[2].item
+                n_arg = n.args[3].item
+            end
+        end
+
+        # Generate: (var <= 0 || n <= 0) ? μ : $rdist_normal(_rdist_seed, μ, var/n)
+        print(scope.io, "((")
+        scope(var_arg)
+        print(scope.io, " <= 0) || (")
+        scope(n_arg)
+        print(scope.io, " <= 0) ? ")
+        scope(mu_arg)
+        print(scope.io, " : \$rdist_normal(_rdist_seed, ")
+        scope(mu_arg)
+        print(scope.io, ", ")
+        scope(var_arg)
+        print(scope.io, " / ")
+        scope(n_arg)
+        print(scope.io, "))")
+
     else
         print(scope.io, String(n.id), "(")
         first_arg = true
@@ -553,17 +660,23 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Subckt}) where {Sim <: AbstractV
     print(scope.io, "  electrical ")
     println(scope.io, join(port_names, ", "), ";")
 
+    println(scope.io)
+
+    # Always add _rdist_seed parameter for $rdist_normal support
+    println(scope.io, "  parameter integer _rdist_seed = 0;")
+
     # Parameter declarations from subcircuit header
     if !isempty(n.parameters)
-        println(scope.io)
         for par in n.parameters
             param_name_str = lowercase(String(par.name))
-            print(scope.io, "  parameter real ", param_name_str, " = ")
-            if par.val !== nothing
-                child_scope(par.val)
-            else
-                print(scope.io, "0")
+
+            # Warn if subcircuit parameter has no default value
+            if par.val === nothing
+                @warn "Subcircuit parameter '$param_name_str' has no default value - defaulting to 0" maxlog=1
             end
+
+            print(scope.io, "  parameter real ", param_name_str, " = ")
+            child_scope(par.val === nothing ? "0" : par.val)
             println(scope.io, ";")
         end
     end
@@ -721,12 +834,7 @@ function spice_two_terminal_device(scope::CodeGenScope, n, device_type::String, 
                     end
 
                     print(scope.io, ".", lowercase(name), "(")
-                    # Render value (handle both String and SNode)
-                    if value isa String
-                        print(scope.io, value)
-                    else
-                        scope(value)
-                    end
+                    scope(value)  # Handles both String and SNode
                     print(scope.io, ")")
                     first_param = false
                 end
@@ -873,12 +981,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Diode}) where {Sim <: AbstractVe
                 end
 
                 print(scope.io, ".", param_name, "(")
-                # Render value (handle both String and SNode)
-                if param_value isa String
-                    print(scope.io, param_value)
-                else
-                    scope(param_value)
-                end
+                scope(param_value)  # Handles both String and SNode
                 print(scope.io, ")")
                 first_param = false
             end
@@ -991,12 +1094,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.BipolarTransistor}) where {Sim <
                 end
 
                 print(scope.io, ".", param_name, "(")
-                # Render value (handle both String and SNode)
-                if param_value isa String
-                    print(scope.io, param_value)
-                else
-                    scope(param_value)
-                end
+                scope(param_value)  # Handles both String and SNode
                 print(scope.io, ")")
                 first_param = false
             end
@@ -1152,12 +1250,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.OSDIDevice}) where {Sim <: Abstr
                 end
 
                 print(scope.io, ".", param_name, "(")
-                # Render value (handle both String and SNode)
-                if param_value isa String
-                    print(scope.io, param_value)
-                else
-                    scope(param_value)
-                end
+                scope(param_value)  # Handles both String and SNode
                 print(scope.io, ")")
                 first_param = false
             end

@@ -217,6 +217,10 @@ end
 # Handle nothing nodes gracefully
 (scope::CodeGenScope)(::Nothing) = nothing
 
+# Handlers for numeric/string literals that can be emitted directly
+(scope::CodeGenScope)(val::Real) = print(scope.io, val)
+(scope::CodeGenScope)(val::AbstractString) = print(scope.io, val)
+
 # =============================================================================
 # Source and Block Nodes - Recurse into children
 # =============================================================================

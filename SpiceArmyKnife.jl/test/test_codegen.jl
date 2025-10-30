@@ -442,6 +442,108 @@ X1 a b gnd rc_filter
         end
     end
 
+    @testset "Verilog-A Code Generation" begin
+        @testset "ngspice gauss 3-argument form" begin
+            # Test gauss(nom, rvar, sigma) with division-by-zero protection
+            spice = """
+.subckt test_random in out
+.param res={gauss(1000, 0.05, 3)}
+R1 in out res
+.ends test_random
+"""
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, Gnucap(), options=Dict{Symbol,Any}(:spice_dialect => :ngspice))
+
+            # Should contain _rdist_seed parameter
+            @test occursin("parameter integer _rdist_seed", output)
+
+            # Should have ternary with division-by-zero protection
+            @test occursin("((0.05 <= 0) || (3 <= 0) ? 1000 : \$rdist_normal", output)
+            @test occursin("\$rdist_normal(_rdist_seed, 1000, (0.05 * 1000) / 3)", output)
+        end
+
+        @testset "ngspice agauss 3-argument form" begin
+            # Test agauss(nom, avar, sigma) with division-by-zero protection
+            spice = """
+.subckt test_random2 in out
+.param cap={agauss(1e-12, 1e-14, 3)}
+C1 in out cap
+.ends test_random2
+"""
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, Gnucap(), options=Dict{Symbol,Any}(:spice_dialect => :ngspice))
+
+            # Should contain _rdist_seed parameter
+            @test occursin("parameter integer _rdist_seed", output)
+
+            # Should have ternary with division-by-zero protection
+            @test occursin("((1e-14 <= 0) || (3 <= 0) ? 1e-12 : \$rdist_normal", output)
+            @test occursin("\$rdist_normal(_rdist_seed, 1e-12, 1e-14 / 3)", output)
+        end
+
+        @testset "Xyce agauss 2-argument form" begin
+            # Test Xyce AGAUSS(μ, α) with default n=1 (from IHP PDK)
+            spice = """
+.subckt test_xyce in out
+.param rsh={agauss(100, 0.0833)}
+R1 in out rsh
+.ends test_xyce
+"""
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, Gnucap(), options=Dict{Symbol,Any}(:spice_dialect => :xyce))
+
+            # Should use Xyce semantics with n default of 1
+            @test occursin("((0.0833 <= 0) || (1 <= 0) ? 100 : \$rdist_normal", output)
+            @test occursin("\$rdist_normal(_rdist_seed, 100, 0.0833 / 1)", output)
+        end
+
+        @testset "Xyce gauss 3-argument form" begin
+            # Test Xyce GAUSS(μ, α, n) with explicit n
+            spice = """
+.subckt test_xyce_gauss in out
+.param r={gauss(1000, 0.1, 3)}
+R1 in out r
+.ends test_xyce_gauss
+"""
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, Gnucap(), options=Dict{Symbol,Any}(:spice_dialect => :xyce))
+
+            # Xyce semantics: stddev = (α * μ) / n
+            @test occursin("((0.1 <= 0) || (3 <= 0) ? 1000 : \$rdist_normal", output)
+            @test occursin("\$rdist_normal(_rdist_seed, 1000, (0.1 * 1000) / 3)", output)
+        end
+
+        @testset "division by zero protection with sigma=0" begin
+            # Test the case from IHP PDK: gauss(1, 1, (mm_ok != 1 ? 0 : 1))
+            spice = """
+.subckt test_divzero in out
+.param mm_ok=0
+.param nsmm={gauss(1, 1, (mm_ok != 1 ? 0 : 1))}
+R1 in out 1k
+.ends test_divzero
+"""
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, Gnucap(), options=Dict{Symbol,Any}(:spice_dialect => :ngspice))
+
+            # Should have protection: when sigma=0, returns nominal
+            @test occursin("? 1 :", output)  # Ternary returns 1 when condition is true
+        end
+
+        @testset "_rdist_seed always added to modules" begin
+            # Even modules without gauss/agauss should have _rdist_seed parameter
+            spice = """
+.subckt simple_res in out
+R1 in out 1k
+.ends simple_res
+"""
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, Gnucap())
+
+            # Should contain _rdist_seed parameter
+            @test occursin("parameter integer _rdist_seed = 0", output)
+        end
+    end
+
     @testset "Device Type to VA Module Mapping" begin
         @testset "BJT level mappings" begin
             @testset "Default Gummel-Poon (no level)" begin
