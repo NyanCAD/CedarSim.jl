@@ -143,10 +143,15 @@ function (@main)(ARGS)
         # Write output file - use file IO directly to enable separate include file generation
         println("Writing output file...")
         output_dir = dirname(abspath(output_file))
+
+        # Use output filename (without extension) as library name for Spectre
+        lib_name = splitext(basename(output_file))[1]
+
         options = Dict{Symbol, Any}(
             :output_dir => output_dir,
             :spice_dialect => input_simulator_sym,
-            :va_models => model_database
+            :va_models => model_database,
+            :library_name => lib_name
         )
         open(output_file, "w") do io
             generate_code(ast, io, output_sim; options=options, includepaths=includepaths)

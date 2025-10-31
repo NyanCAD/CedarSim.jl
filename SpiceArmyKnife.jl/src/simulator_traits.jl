@@ -98,6 +98,13 @@ Cadence Spectre - commercial circuit simulator with its own netlist syntax.
 """
 struct SpectreADE <: AbstractSpectreSimulator end
 
+"""
+    VACASK <: AbstractSpectreSimulator
+
+VACASK - open source Spectre-compatible simulator.
+"""
+struct VACASK <: AbstractSpectreSimulator end
+
 # Verilog-A simulators
 """
     OpenVAF <: AbstractVerilogASimulator
@@ -268,6 +275,7 @@ symbol_from_simulator(::Xyce) = :xyce
 symbol_from_simulator(::SpectreADE) = :spectre
 symbol_from_simulator(::OpenVAF) = :openvaf
 symbol_from_simulator(::Gnucap) = :gnucap
+symbol_from_simulator(::VACASK) = :vacask
 
 """
     simulator_from_symbol(dialect::Symbol) -> AbstractSimulator
@@ -294,6 +302,7 @@ function simulator_from_symbol(dialect::Symbol)
         :spectre => SpectreADE(),
         :openvaf => OpenVAF(),
         :gnucap => Gnucap(),
+        :vacask => VACASK(),
     )
 
     if !haskey(dialect_map, dialect)
