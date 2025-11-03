@@ -138,17 +138,22 @@ function (@main)(ARGS)
         # Generate output
         println("Generating output code...")
         # Set up includepaths with input file's directory for resolving relative includes
-        includepaths = [dirname(abspath(input_file))]
+        input_file_abs = abspath(input_file)
+        source_root = dirname(input_file_abs)
+        includepaths = [source_root]
 
         # Write output file - use file IO directly to enable separate include file generation
         println("Writing output file...")
-        output_dir = dirname(abspath(output_file))
+        output_file_abs = abspath(output_file)
+        output_dir = dirname(output_file_abs)
 
         # Use output filename (without extension) as library name for Spectre
         lib_name = splitext(basename(output_file))[1]
 
         options = Dict{Symbol, Any}(
             :output_dir => output_dir,
+            :source_root => source_root,
+            :main_output_file => output_file_abs,
             :spice_dialect => input_simulator_sym,
             :va_models => model_database,
             :library_name => lib_name

@@ -94,7 +94,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SC.Subckt})
     # End
     print(scope.io, "ends")
     if n.end_name !== nothing
-        print(scope.io, " ")
+        print(scope.io, " // ")
         scope(n.end_name)
     end
     println(scope.io)
@@ -148,7 +148,7 @@ function format_node_list(scope::CodeGenScope, nodes)
         end
         # Create temporary scope to render node
         temp_scope = CodeGenScope{typeof(scope).parameters[1]}(buf, 0, scope.options, scope.params, scope.parent_scope,
-                                                                 scope.includepaths, scope.processed_includes)
+                                                                 scope.includepaths, scope.processed_includes, scope.current_output_file)
         temp_scope(node)
         first = false
     end
@@ -164,7 +164,7 @@ Render a parameter value (handles both SNode and String/Number types).
 function render_value(scope::CodeGenScope, val)
     buf = IOBuffer()
     temp_scope = CodeGenScope{typeof(scope).parameters[1]}(buf, 0, scope.options, scope.params, scope.parent_scope,
-                                                             scope.includepaths, scope.processed_includes)
+                                                             scope.includepaths, scope.processed_includes, scope.current_output_file)
     temp_scope(val)
     return String(take!(buf))
 end
@@ -263,15 +263,17 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Subckt})
         print(scope.io, " ")
         print(scope.io, format_node_list(scope, n.subckt_nodes))
     end
+    println(scope.io)
 
-    # Parameters (if any)
+    # Output parameters as separate parameters line (if any)
     if !isempty(n.parameters)
+        print(scope.io, "parameters")
         for param in n.parameters
             print(scope.io, " ")
             scope(param)
         end
+        println(scope.io)
     end
-    println(scope.io)
 
     # Body statements
     for stmt in n.stmts
@@ -281,7 +283,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Subckt})
     # End
     print(scope.io, "ends")
     if n.name_end !== nothing
-        print(scope.io, " ")
+        print(scope.io, " // ")
         scope(n.name_end)
     end
     println(scope.io)
@@ -289,9 +291,6 @@ end
 
 # SPICE Model: .model name type params → model name type params
 function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Model})
-    # Preserve leading comments
-    write_leading_trivia(scope, n)
-
     print(scope.io, "model ")
     scope(n.name)
     print(scope.io, " ")
@@ -548,15 +547,12 @@ end
 # =============================================================================
 
 # SPICE Include: .include "file.sp" → include "file.scs"
-# Recursively processes included files with inherited scope
-# - If output is a file: writes to separate .scs file in same directory, emits include directive
+# Recursively processes included files with inherited scope, mirroring source directory structure
+# - If output is a file: writes to separate .scs file, emits include directive
 # - If output is memory (IOBuffer): inlines the content directly, no include directive
 function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.IncludeStatement})
     # Strip outer quotes from path (preserves escape sequences)
     path_str = strip(String(n.path), ['"', '\''])
-
-    # Compute output path with .scs extension (preserve relative directory structure)
-    output_relpath = splitext(path_str)[1] * ".scs"
 
     # Resolve the full path to the include file
     fullpath = resolve_includepath(path_str, scope.includepaths)
@@ -581,9 +577,16 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.IncludeSt
 
             # Determine if we're writing to a file or memory
             if scope.io isa IOStream
-                # Writing to file - create separate .scs file, mirroring directory structure
+                # Writing to file - mirror source directory structure in output
+                source_root = get(scope.options, :source_root, dirname(fullpath))
                 output_dir = get(scope.options, :output_dir, ".")
-                output_path = joinpath(output_dir, output_relpath)
+
+                # Compute relative path from source root to included file
+                rel_from_source_root = relpath(fullpath, source_root)
+
+                # Change extension and compute output path (mirrors source structure)
+                output_relpath_from_root = splitext(rel_from_source_root)[1] * ".scs"
+                output_path = joinpath(output_dir, output_relpath_from_root)
 
                 # Create directory structure if needed (equivalent to mkdir -p)
                 mkpath(dirname(output_path))
@@ -593,7 +596,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.IncludeSt
                 inc_includepaths = [dirname(fullpath), scope.includepaths...]
                 open(output_path, "w") do inc_io
                     inc_scope = CodeGenScope{typeof(scope).parameters[1]}(inc_io, 0, scope.options, scope.params, scope.parent_scope,
-                                                  inc_includepaths, scope.processed_includes)
+                                                  inc_includepaths, scope.processed_includes, output_path)
                     inc_scope(inc_ast)
                 end
             else
@@ -609,9 +612,27 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.IncludeSt
         end
     end
 
-    # Emit include directive only if writing to file (mirrors file structure)
+    # Emit include directive only if writing to file (use relative path from current file to included file)
     if scope.io isa IOStream
-        println(scope.io, "include \"", output_relpath, "\"")
+        # Compute paths for relative include directive
+        source_root = get(scope.options, :source_root, dirname(fullpath))
+        output_dir = get(scope.options, :output_dir, ".")
+        current_output_file = scope.current_output_file
+
+        if current_output_file !== nothing
+            # Compute output path for included file (mirrors source structure)
+            rel_from_source_root = relpath(fullpath, source_root)
+            output_relpath_from_root = splitext(rel_from_source_root)[1] * ".scs"
+            included_output_path = joinpath(output_dir, output_relpath_from_root)
+
+            # Emit relative path from current output file to included output file
+            relative_include_path = relpath(included_output_path, dirname(current_output_file))
+            println(scope.io, "include \"", relative_include_path, "\"")
+        else
+            # Fallback: use path_str with changed extension (shouldn't happen for file output)
+            output_relpath = splitext(path_str)[1] * ".scs"
+            println(scope.io, "include \"", output_relpath, "\"")
+        end
     end
     # If IOBuffer: content already inlined, no directive needed
 end
@@ -679,6 +700,17 @@ end
 # SPICE Option: .option opt=val → simulatorOptions options opt=val
 function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.OptionStatement})
     print(scope.io, "simulatorOptions options")
+
+    # Process option parameters
+    for param in n.params
+        print(scope.io, " ")
+        scope(param)
+    end
+    println(scope.io)
+end
+
+function (scope::CodeGenScope{VACASK})(n::SNode{SP.OptionStatement})
+    print(scope.io, "// simulatorOptions options")
 
     # Process option parameters
     for param in n.params

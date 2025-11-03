@@ -248,15 +248,12 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.LibStatement}) where {Sim <: Abs
 end
 
 # Verilog-A handler for SPICE .include statements
-# Recursively processes included files with inherited scope
-# - If output is a file: writes to separate .va file in same directory, emits `include directive
+# Recursively processes included files with inherited scope, mirroring source directory structure
+# - If output is a file: writes to separate .va file, emits `include directive
 # - If output is memory (IOBuffer): inlines the content directly, no `include directive
 function (scope::CodeGenScope{Sim})(n::SNode{SP.IncludeStatement}) where {Sim <: AbstractVerilogASimulator}
     # Strip outer quotes from path (preserves escape sequences)
     path_str = strip(String(n.path), ['"', '\''])
-
-    # Compute output path with .va extension (preserve relative directory structure)
-    output_relpath = splitext(path_str)[1] * ".va"
 
     # Resolve the full path to the include file
     fullpath = resolve_includepath(path_str, scope.includepaths)
@@ -281,9 +278,16 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.IncludeStatement}) where {Sim <:
 
             # Determine if we're writing to a file or memory
             if scope.io isa IOStream
-                # Writing to file - create separate .va file, mirroring directory structure
+                # Writing to file - mirror source directory structure in output
+                source_root = get(scope.options, :source_root, dirname(fullpath))
                 output_dir = get(scope.options, :output_dir, ".")
-                output_path = joinpath(output_dir, output_relpath)
+
+                # Compute relative path from source root to included file
+                rel_from_source_root = relpath(fullpath, source_root)
+
+                # Change extension and compute output path (mirrors source structure)
+                output_relpath_from_root = splitext(rel_from_source_root)[1] * ".va"
+                output_path = joinpath(output_dir, output_relpath_from_root)
 
                 # Create directory structure if needed (equivalent to mkdir -p)
                 mkpath(dirname(output_path))
@@ -293,7 +297,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.IncludeStatement}) where {Sim <:
                 inc_includepaths = [dirname(fullpath), scope.includepaths...]
                 open(output_path, "w") do inc_io
                     inc_scope = CodeGenScope{Sim}(inc_io, 0, scope.options, scope.params, scope.parent_scope,
-                                                  inc_includepaths, scope.processed_includes)
+                                                  inc_includepaths, scope.processed_includes, output_path)
                     inc_scope(inc_ast)
                 end
             else
@@ -309,9 +313,27 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.IncludeStatement}) where {Sim <:
         end
     end
 
-    # Emit `include directive only if writing to file (mirrors file structure)
+    # Emit `include directive only if writing to file (use relative path from current file to included file)
     if scope.io isa IOStream
-        println(scope.io, "`include \"", output_relpath, "\"")
+        # Compute paths for relative include directive
+        source_root = get(scope.options, :source_root, dirname(fullpath))
+        output_dir = get(scope.options, :output_dir, ".")
+        current_output_file = scope.current_output_file
+
+        if current_output_file !== nothing
+            # Compute output path for included file (mirrors source structure)
+            rel_from_source_root = relpath(fullpath, source_root)
+            output_relpath_from_root = splitext(rel_from_source_root)[1] * ".va"
+            included_output_path = joinpath(output_dir, output_relpath_from_root)
+
+            # Emit relative path from current output file to included output file
+            relative_include_path = relpath(included_output_path, dirname(current_output_file))
+            println(scope.io, "`include \"", relative_include_path, "\"")
+        else
+            # Fallback: use path_str with changed extension (shouldn't happen for file output)
+            output_relpath = splitext(path_str)[1] * ".va"
+            println(scope.io, "`include \"", output_relpath, "\"")
+        end
     end
     # If IOBuffer: content already inlined, no directive needed
 end

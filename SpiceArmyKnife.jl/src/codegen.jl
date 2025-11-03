@@ -56,18 +56,20 @@ struct CodeGenScope{Sim <: AbstractSimulator}
     parent_scope::Union{Nothing, CodeGenScope{Sim}}
     includepaths::Vector{String}
     processed_includes::Dict{String, Set{Symbol}}
+    current_output_file::Union{String, Nothing}
 end
 
 # Constructor with optional indent and options (creates global scope with no parent)
 function CodeGenScope{Sim}(io::IO, indent::Int=0, options::Dict{Symbol, Any}=Dict{Symbol, Any}(),
-                           includepaths::Vector{String}=String[]) where {Sim <: AbstractSimulator}
-    CodeGenScope{Sim}(io, indent, options, Set{Symbol}(), nothing, includepaths, Dict{String, Set{Symbol}}())
+                           includepaths::Vector{String}=String[],
+                           current_output_file::Union{String, Nothing}=nothing) where {Sim <: AbstractSimulator}
+    CodeGenScope{Sim}(io, indent, options, Set{Symbol}(), nothing, includepaths, Dict{String, Set{Symbol}}(), current_output_file)
 end
 
-# Helper to create new scope with modified indent (preserves params, parent, includepaths, and cache)
+# Helper to create new scope with modified indent (preserves params, parent, includepaths, cache, and current file)
 with_indent(scope::CodeGenScope{Sim}, delta::Int) where {Sim <: AbstractSimulator} =
     CodeGenScope{Sim}(scope.io, scope.indent + delta, scope.options, scope.params, scope.parent_scope,
-                      scope.includepaths, scope.processed_includes)
+                      scope.includepaths, scope.processed_includes, scope.current_output_file)
 
 """
     is_global_scope(scope::CodeGenScope) -> Bool
@@ -81,11 +83,11 @@ is_global_scope(scope::CodeGenScope) = scope.parent_scope === nothing
     create_child_scope(scope::CodeGenScope{Sim}) -> CodeGenScope{Sim}
 
 Create a child scope for a module/subcircuit.
-Preserves IO, options, includepaths, and cache but creates new empty params set with parent link.
+Preserves IO, options, includepaths, cache, and current file but creates new empty params set with parent link.
 """
 function create_child_scope(scope::CodeGenScope{Sim}) where {Sim <: AbstractSimulator}
     CodeGenScope{Sim}(scope.io, scope.indent, scope.options, Set{Symbol}(), scope,
-                      scope.includepaths, scope.processed_includes)
+                      scope.includepaths, scope.processed_includes, scope.current_output_file)
 end
 
 """
@@ -96,7 +98,7 @@ Render a node to a string by creating a temporary scope with an IOBuffer.
 function render_to_string(scope::CodeGenScope{Sim}, node) where {Sim <: AbstractSimulator}
     buf = IOBuffer()
     temp_scope = CodeGenScope{Sim}(buf, 0, scope.options, Set{Symbol}(), scope,
-                                   scope.includepaths, scope.processed_includes)
+                                   scope.includepaths, scope.processed_includes, scope.current_output_file)
     temp_scope(node)
     return String(take!(buf))
 end
@@ -428,7 +430,8 @@ function generate_code(ast::SNode, simulator::AbstractSimulator; options::Dict=D
     end
 
     io = IOBuffer()
-    scope = CodeGenScope{typeof(simulator)}(io, 0, options, includepaths)
+    current_output_file = get(options, :main_output_file, nothing)
+    scope = CodeGenScope{typeof(simulator)}(io, 0, options, includepaths, current_output_file)
     scope(ast)
     return String(take!(io))
 end
@@ -467,7 +470,8 @@ function generate_code(ast::SNode, io::IO, simulator::AbstractSimulator; options
         visit_errors(ast; io=stderr)
     end
 
-    scope = CodeGenScope{typeof(simulator)}(io, 0, options, includepaths)
+    current_output_file = get(options, :main_output_file, nothing)
+    scope = CodeGenScope{typeof(simulator)}(io, 0, options, includepaths, current_output_file)
     scope(ast)
 end
 
