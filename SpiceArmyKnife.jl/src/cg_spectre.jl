@@ -434,9 +434,17 @@ function generate_binned_models(scope::CodeGenScope{Sim}) where {Sim <: Abstract
         for (i, (lmin, lmax, wmin, wmax, model_node)) in enumerate(sorted_bins)
             # Generate condition
             if i == 1
-                print(scope.io, "if (l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax, ") {\n")
+                if Sim === VACASK
+                    println(scope.io, "@if l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax)
+                else
+                    print(scope.io, "if (l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax, ") {\n")
+                end
             else
-                print(scope.io, "} else if (l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax, ") {\n")
+                if Sim === VACASK
+                    println(scope.io, "@elseif l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax)
+                else
+                    print(scope.io, "} else if (l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax, ") {\n")
+                end
             end
 
             # Generate model line with base name (no .N suffix)
@@ -452,7 +460,11 @@ function generate_binned_models(scope::CodeGenScope{Sim}) where {Sim <: Abstract
         end
 
         # Close the if-expression
-        println(scope.io, "}")
+        if Sim === VACASK
+            println(scope.io, "@end")
+        else
+            println(scope.io, "}")
+        end
         println(scope.io)
     end
 
@@ -823,25 +835,23 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.GlobalSta
     println(scope.io)
 end
 
-# SPICE If Block: .if condition → Spectre conditional (if supported)
+# SPICE If Block: .if condition → Spectre conditional instantiation
 function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.IfBlock})
-    # Spectre supports conditional compilation with preprocessor
-    # Convert to `ifdef style or inline conditionals
-
+    # Spectre uses if/else blocks with braces for conditional instantiation (model binning)
     for (i, case_node) in enumerate(n.cases)
         if i == 1
             # First case - .if
-            print(scope.io, "`ifdef ")
+            print(scope.io, "if (")
             scope(case_node.condition)
-            println(scope.io)
+            println(scope.io, ") {")
         elseif case_node.condition !== nothing
             # .elseif
-            print(scope.io, "`elsif ")
+            print(scope.io, "} else if (")
             scope(case_node.condition)
-            println(scope.io)
+            println(scope.io, ") {")
         else
             # .else
-            println(scope.io, "`else")
+            println(scope.io, "} else {")
         end
 
         # Process statements
@@ -850,7 +860,34 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.IfBlock})
         end
     end
 
-    println(scope.io, "`endif")
+    println(scope.io, "}")
+end
+
+# VACASK If Block: .if condition → @if-@elseif-@else-@end
+function (scope::CodeGenScope{VACASK})(n::SNode{SP.IfBlock})
+    for (i, case_node) in enumerate(n.cases)
+        if i == 1
+            # First case - .if
+            print(scope.io, "@if ")
+            scope(case_node.condition)
+            println(scope.io)
+        elseif case_node.condition !== nothing
+            # .elseif
+            print(scope.io, "@elseif ")
+            scope(case_node.condition)
+            println(scope.io)
+        else
+            # .else
+            println(scope.io, "@else")
+        end
+
+        # Process statements
+        for stmt in case_node.stmts
+            scope(stmt)
+        end
+    end
+
+    println(scope.io, "@end")
 end
 
 # =============================================================================

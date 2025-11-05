@@ -596,6 +596,9 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractVe
 
         println(scope.io, "paramset ", model_name, " ", va_module, ";")
 
+        # Always add _rdist_seed parameter for $rdist_normal support
+        println(scope.io, "  parameter integer _rdist_seed = 0;")
+
         # Generate parameter declarations (use lowercase)
         for param in va_model.parameters
             param_name_lower = lowercase(param.name)
