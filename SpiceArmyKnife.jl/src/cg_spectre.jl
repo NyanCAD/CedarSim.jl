@@ -91,6 +91,9 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SC.Subckt})
         scope(stmt)
     end
 
+    # Generate binned models at end of subcircuit (if simulator doesn't support binning)
+    generate_binned_models(scope)
+
     # End
     print(scope.io, "ends")
     if n.end_name !== nothing
@@ -233,6 +236,10 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.SPICENetl
         scope(stmt)
     end
 
+    # Generate binned models at end of file (if simulator doesn't support binning)
+    # This handles top-level models outside library sections
+    generate_binned_models(scope)
+
     # Close library wrapper if needed
     if has_lib_sections
         println(scope.io)
@@ -280,6 +287,9 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Subckt})
         scope(stmt)
     end
 
+    # Generate binned models at end of subcircuit (if simulator doesn't support binning)
+    generate_binned_models(scope)
+
     # End
     print(scope.io, "ends")
     if n.name_end !== nothing
@@ -289,8 +299,96 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Subckt})
     println(scope.io)
 end
 
+# =============================================================================
+# Helper Functions for Binning
+# =============================================================================
+
+# hasparam is defined in cg_veriloga.jl
+
+"""
+    build_param_dict(params) -> Dict{Symbol, Union{Float64, Nothing}}
+
+Build a dictionary of parameter names to their numeric values (case-insensitive keys).
+Returns nothing for non-numeric values.
+"""
+function build_param_dict(params)
+    param_dict = Dict{Symbol, Union{Float64, Nothing}}()
+    for p in params
+        param_name = Symbol(lowercase(String(p.name)))
+        if p.val !== nothing
+            val_str = String(p.val)
+            try
+                param_dict[param_name] = parse(Float64, val_str)
+            catch
+                param_dict[param_name] = nothing
+            end
+        else
+            param_dict[param_name] = nothing
+        end
+    end
+    return param_dict
+end
+
+"""
+    is_binned_model(param_dict::Dict{Symbol, Union{Float64, Nothing}}) -> Bool
+
+Check if a model has binning parameters (LMIN, LMAX, WMIN, WMAX) with numeric values.
+"""
+function is_binned_model(param_dict::Dict{Symbol, Union{Float64, Nothing}})
+    return haskey(param_dict, :lmin) && haskey(param_dict, :lmax) &&
+           haskey(param_dict, :wmin) && haskey(param_dict, :wmax) &&
+           param_dict[:lmin] !== nothing && param_dict[:lmax] !== nothing &&
+           param_dict[:wmin] !== nothing && param_dict[:wmax] !== nothing
+end
+
+"""
+    get_model_base_name(model_name::String) -> String
+
+Strip numeric suffix from model name for binning.
+Example: "nmos.1" → "nmos", "pmos_10" → "pmos"
+"""
+function get_model_base_name(model_name::String)
+    # Match patterns like .N or _N at the end
+    m = match(r"^(.+)[._](\d+)$", model_name)
+    if m !== nothing
+        return m.captures[1]
+    end
+    return model_name
+end
+
 # SPICE Model: .model name type params → model name type params
-function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Model})
+# If simulator doesn't support binning, accumulate binned models for later generation
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractSpectreSimulator}
+    # Check if simulator supports binning - if not, detect and accumulate binned models
+    if !binningsupport(Sim())
+        # Build parameter dict once for efficient lookups
+        param_dict = build_param_dict(n.parameters)
+
+        # Check if this model has binning parameters
+        if is_binned_model(param_dict)
+            # Extract binning parameter values (guaranteed to be non-nothing by is_binned_model)
+            lmin = param_dict[:lmin]
+            lmax = param_dict[:lmax]
+            wmin = param_dict[:wmin]
+            wmax = param_dict[:wmax]
+
+            # Get or create binned_models dict in options
+            binned_models = get!(scope.options, :binned_models, Dict{Symbol, Vector{Tuple{Float64, Float64, Float64, Float64, SNode{SP.Model}}}}())
+
+            # Get base model name (strip .N or _N suffix)
+            model_name = String(n.name)
+            base_name = Symbol(get_model_base_name(model_name))
+
+            # Add this bin to the vector for this base model
+            bins = get!(binned_models, base_name, Vector{Tuple{Float64, Float64, Float64, Float64, SNode{SP.Model}}}())
+            push!(bins, (lmin, lmax, wmin, wmax, n))
+
+            # Don't output the model yet - it will be output as unified binned model later
+            return
+        end
+    end
+
+    # Non-binned model (or simulator has binning support): output normally
     print(scope.io, "model ")
     scope(n.name)
     print(scope.io, " ")
@@ -301,6 +399,65 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Model})
         scope(param)
     end
     println(scope.io)
+end
+
+"""
+    generate_binned_models(scope::CodeGenScope{Sim}) where {Sim <: AbstractSpectreSimulator}
+
+Generate if-expression binning logic for all accumulated binned models.
+This should be called at the end of block processing (subcircuit, library section, file)
+for simulators that don't have built-in binning support.
+
+For simulators with binning support, this is a no-op.
+"""
+function generate_binned_models(scope::CodeGenScope{Sim}) where {Sim <: AbstractSpectreSimulator}
+    # Only generate if simulator doesn't support binning
+    if binningsupport(Sim())
+        return  # Simulator has built-in binning, no code generation needed
+    end
+    # Check if we have any binned models accumulated
+    binned_models = get(scope.options, :binned_models, nothing)
+    if binned_models === nothing || isempty(binned_models)
+        return  # No binned models to generate
+    end
+
+    # Generate if-expressions for each binned model group
+    for (base_name, bins) in binned_models
+        if isempty(bins)
+            continue
+        end
+
+        # Sort bins by lmin, wmin for consistent output
+        sorted_bins = sort(bins, by = b -> (b[1], b[3]))  # Sort by lmin, then wmin
+
+        # Generate if-expression with all bins
+        for (i, (lmin, lmax, wmin, wmax, model_node)) in enumerate(sorted_bins)
+            # Generate condition
+            if i == 1
+                print(scope.io, "if (l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax, ") {\n")
+            else
+                print(scope.io, "} else if (l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax, ") {\n")
+            end
+
+            # Generate model line with base name (no .N suffix)
+            print(scope.io, "    model ", base_name, " ")
+            scope(model_node.typ)
+
+            # Output all parameters (including binning params for now)
+            for param in model_node.parameters
+                print(scope.io, " ")
+                scope(param)
+            end
+            println(scope.io)
+        end
+
+        # Close the if-expression
+        println(scope.io, "}")
+        println(scope.io)
+    end
+
+    # Clear the accumulated binned models after generation
+    empty!(binned_models)
 end
 
 # SPICE Parameter statement: .param x=1 → parameters x=1
@@ -648,6 +805,9 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.LibStatem
     for stmt in n.stmts
         scope(stmt)
     end
+
+    # Generate binned models at end of library section (if simulator doesn't support binning)
+    generate_binned_models(scope)
 
     println(scope.io, "endsection ", lib_name)
     println(scope.io)

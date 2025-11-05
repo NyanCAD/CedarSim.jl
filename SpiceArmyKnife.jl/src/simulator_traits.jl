@@ -259,6 +259,31 @@ operator_replacement(::AbstractSimulator, op::String) = (:operator, op)
 operator_replacement(::Gnucap, op::String) = op == "**" ? (:function, "pow") : (:operator, op)
 
 # =============================================================================
+# Model Binning Support Trait
+# =============================================================================
+
+"""
+    binningsupport(simulator::AbstractSimulator) -> Bool
+
+Returns true if the simulator has built-in model binning support.
+
+Model binning is a technique where multiple model cards with different parameter ranges
+are combined into a single model that selects the appropriate parameter set based on
+device dimensions (L and W). Models are identified by LMIN, LMAX, WMIN, WMAX parameters.
+
+Most simulators (NGSPICE, Xyce, Spectre, etc.) have runtime binning selection built-in.
+VACASK does not support runtime binning, so binned models must be converted to explicit
+if-expressions at the netlist level.
+
+Default: true (most simulators have built-in binning support)
+VACASK: false (requires explicit if-expression generation for binned models)
+"""
+binningsupport(::AbstractSimulator) = true
+
+# VACASK does NOT support binning - requires explicit if-expressions
+binningsupport(::VACASK) = false
+
+# =============================================================================
 # Helper Functions
 # =============================================================================
 
