@@ -6,3 +6,9 @@ test/ir.tar.gz
 ir/
 docs/Manifest.toml
 docs/build
+
+# External dependencies for testing
+VACASK/
+skywater-pdk-libs-sky130_fd_pr/
+vacask_*.tar.gz
+julia-*.tar.gz
