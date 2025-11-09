@@ -1,0 +1,23 @@
+This is vacask 0.3.1.
+(c)2023-2025 EDA Lab FE Uni-Lj, Arpad Buermen
+https://codeberg.org/arpadbuermen/VACASK
+
+Simulating: // SkyWater SKY130 transistor test with converted VACASK models
+Hierarchical instance M1 of definition sky130_fd_pr__nfet_01v8
+  Terminals: d g 0 0 
+  Parameters:
+    l = 5e-07
+    w = 1e-06
+    nf = 1
+    ad = 0
+    as = 0
+    pd = 0
+    ps = 0
+    nrd = 0
+    nrs = 0
+    sa = 0
+    sb = 0
+    sd = 0
+    mult = 1
+Running analysis 'op1'.
+  Elapsed time: 0.000813214

@@ -1,0 +1,19 @@
+// SkyWater SKY130 transistor test with converted VACASK models
+
+include "simple_nfet_vacask.spice"
+
+// Voltage sources
+model v vsource
+vgs (g 0) v dc=1.8
+vds (d 0) v dc=1.8
+
+subckt test()
+  M1 (d g 0 0) sky130_fd_pr__nfet_01v8 w=1.0e-6 l=0.5e-6
+ends
+
+control
+  elaborate circuit("test")
+  print instance("M1")
+  save default
+  analysis op1 op
+endc
