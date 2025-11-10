@@ -97,7 +97,13 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SC.Subckt})
     # End
     print(scope.io, "ends")
     if n.end_name !== nothing
-        print(scope.io, " // ")
+        # VACASK doesn't support subcircuit name after ends - make it a comment
+        # Standard Spectre uses: ends subckt_name
+        if scope isa CodeGenScope{VACASK}
+            print(scope.io, " // ")
+        else
+            print(scope.io, " ")
+        end
         scope(n.end_name)
     end
     println(scope.io)
@@ -293,7 +299,13 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Subckt})
     # End
     print(scope.io, "ends")
     if n.name_end !== nothing
-        print(scope.io, " // ")
+        # VACASK doesn't support subcircuit name after ends - make it a comment
+        # Standard Spectre uses: ends subckt_name
+        if scope isa CodeGenScope{VACASK}
+            print(scope.io, " // ")
+        else
+            print(scope.io, " ")
+        end
         scope(n.name_end)
     end
     println(scope.io)
@@ -306,13 +318,13 @@ end
 # hasparam is defined in cg_veriloga.jl
 
 """
-    build_param_dict(params) -> Dict{Symbol, Union{Float64, Nothing}}
+    build_param_dict(params) -> Dict{Symbol, Union{Float64, String, Nothing}}
 
-Build a dictionary of parameter names to their numeric values (case-insensitive keys).
-Returns nothing for non-numeric values.
+Build a dictionary of parameter names to their values (case-insensitive keys).
+Returns Float64 for numeric values, String for non-numeric values, and nothing for missing values.
 """
 function build_param_dict(params)
-    param_dict = Dict{Symbol, Union{Float64, Nothing}}()
+    param_dict = Dict{Symbol, Union{Float64, String, Nothing}}()
     for p in params
         param_name = Symbol(lowercase(String(p.name)))
         if p.val !== nothing
@@ -320,7 +332,7 @@ function build_param_dict(params)
             try
                 param_dict[param_name] = parse(Float64, val_str)
             catch
-                param_dict[param_name] = nothing
+                param_dict[param_name] = val_str
             end
         else
             param_dict[param_name] = nothing
@@ -330,11 +342,11 @@ function build_param_dict(params)
 end
 
 """
-    is_binned_model(param_dict::Dict{Symbol, Union{Float64, Nothing}}) -> Bool
+    is_binned_model(param_dict::Dict{Symbol, Union{Float64, String, Nothing}}) -> Bool
 
 Check if a model has binning parameters (LMIN, LMAX, WMIN, WMAX) with numeric values.
 """
-function is_binned_model(param_dict::Dict{Symbol, Union{Float64, Nothing}})
+function is_binned_model(param_dict::Dict{Symbol, Union{Float64, String, Nothing}})
     return haskey(param_dict, :lmin) && haskey(param_dict, :lmax) &&
            haskey(param_dict, :wmin) && haskey(param_dict, :wmax) &&
            param_dict[:lmin] !== nothing && param_dict[:lmax] !== nothing &&
@@ -359,11 +371,11 @@ end
 # SPICE Model: .model name type params → model name type params
 # If simulator doesn't support binning, accumulate binned models for later generation
 function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractSpectreSimulator}
+    # Build parameter dict once for efficient lookups
+    param_dict = build_param_dict(n.parameters)
+
     # Check if simulator supports binning - if not, detect and accumulate binned models
     if !binningsupport(Sim())
-        # Build parameter dict once for efficient lookups
-        param_dict = build_param_dict(n.parameters)
-
         # Check if this model has binning parameters
         if is_binned_model(param_dict)
             # Extract binning parameter values (guaranteed to be non-nothing by is_binned_model)
@@ -392,7 +404,15 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractSp
     print(scope.io, "model ")
     scope(n.name)
     print(scope.io, " ")
-    scope(n.typ)
+
+    # Map SPICE device type to simulator-specific model name
+    device_type = String(n.typ)
+    level = get(param_dict, :level, nothing)
+    version = get(param_dict, :version, nothing)
+
+    # Get mapped model name using device mapping system
+    model_name, type_params = spice_device_type_to_model_name(scope, device_type, level, version)
+    print(scope.io, model_name)
 
     for param in n.parameters
         print(scope.io, " ")
@@ -449,7 +469,15 @@ function generate_binned_models(scope::CodeGenScope{Sim}) where {Sim <: Abstract
 
             # Generate model line with base name (no .N suffix)
             print(scope.io, "    model ", base_name, " ")
-            scope(model_node.typ)
+
+            # Map SPICE device type to simulator-specific model name
+            param_dict = build_param_dict(model_node.parameters)
+            device_type = String(model_node.typ)
+            level = get(param_dict, :level, nothing)
+            version = get(param_dict, :version, nothing)
+
+            model_name, type_params = spice_device_type_to_model_name(scope, device_type, level, version)
+            print(scope.io, model_name)
 
             # Output all parameters (including binning params for now)
             for param in model_node.parameters
@@ -702,13 +730,73 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.SubcktCal
     print(scope.io, " ")
     print(scope.io, format_node_list(scope, n.nodes))
     print(scope.io, " ")
-    scope(n.model)
+    scope(something(n.model, n.model_after))
 
     for param in n.parameters
         print(scope.io, " ")
         scope(param)
     end
     println(scope.io)
+end
+
+# =============================================================================
+# SPICE to Spectre Conversion - Function Calls
+# =============================================================================
+
+# SPICE FunctionCall handler for VACASK - map statistical functions to nominal value
+# VACASK doesn't support gauss, agauss, aunif, unif, limit - return nominal value only
+function (scope::CodeGenScope{VACASK})(n::SNode{SP.FunctionCall})
+    func_name = lowercase(String(n.id))
+
+    if func_name in ("gauss", "agauss", "aunif", "unif", "limit")
+        # Statistical distribution functions not supported by VACASK
+        # Return only the nominal/mean value (first argument)
+        input_dialect = get(scope.options, :spice_dialect, :ngspice)
+        nargs = length(n.args)
+
+        if func_name in ("gauss", "agauss")
+            # gauss(nom, rvar, sigma) → nom
+            # agauss(nom, avar, sigma) → nom
+            # Both dialects: first arg is always nominal value
+            if nargs < 1
+                error("$func_name() requires at least 1 argument for nominal value")
+            end
+            # For ngspice with 1 arg: gauss(sigma) defaults nom=1.0, but we already have 1 arg
+            # For ngspice with 2+ args: first is nom
+            # For Xyce: first is always nom (μ)
+            if input_dialect == :ngspice && nargs == 1
+                # Special case: gauss(sigma) → default nominal is 1.0
+                print(scope.io, "1.0")
+            else
+                scope(n.args[1].item)
+            end
+        elseif func_name in ("aunif", "unif")
+            # unif(nom, rvar) → nom
+            # aunif(nom, avar) → nom
+            if nargs < 1
+                error("$func_name() requires at least 1 argument for nominal value")
+            end
+            scope(n.args[1].item)
+        elseif func_name == "limit"
+            # limit(nom, avar) → nom
+            if nargs < 1
+                error("limit() requires at least 1 argument for nominal value")
+            end
+            scope(n.args[1].item)
+        end
+    else
+        # Regular function call - output with lowercase name
+        print(scope.io, func_name, "(")
+        first_arg = true
+        for arg in n.args
+            if !first_arg
+                print(scope.io, ", ")
+            end
+            scope(arg.item)
+            first_arg = false
+        end
+        print(scope.io, ")")
+    end
 end
 
 # =============================================================================

@@ -544,134 +544,283 @@ R1 in out 1k
         end
     end
 
-    @testset "Device Type to VA Module Mapping" begin
-        @testset "BJT level mappings" begin
+    @testset "Device Type to Model Name Mapping" begin
+        # Helper to create test scope
+        function test_scope(sim=OpenVAF(); dialect=:ngspice)
+            io = IOBuffer()
+            options = Dict{Symbol, Any}(:spice_dialect => dialect)
+            CodeGenScope{typeof(sim)}(io, 0, options)
+        end
+
+        @testset "BJT level mappings - OpenVAF (default)" begin
             @testset "Default Gummel-Poon (no level)" begin
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NPN")
-                @test name == "sp_bjt"
+                scope = test_scope()
+                name, params = spice_device_type_to_model_name(scope, "NPN")
+                @test name == "bjt"
                 @test params[:type] == 1
             end
 
             @testset "NPN vs PNP polarity" begin
-                name_npn, params_npn = SpiceArmyKnife.spice_device_type_to_va_module("NPN")
+                scope = test_scope()
+                name_npn, params_npn = spice_device_type_to_model_name(scope, "NPN")
                 @test params_npn[:type] == 1
 
-                name_pnp, params_pnp = SpiceArmyKnife.spice_device_type_to_va_module("PNP")
+                name_pnp, params_pnp = spice_device_type_to_model_name(scope, "PNP")
                 @test params_pnp[:type] == -1
             end
 
             @testset "Level 1 Gummel-Poon" begin
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NPN", 1)
-                @test name == "sp_bjt"
+                scope = test_scope()
+                name, params = spice_device_type_to_model_name(scope, "NPN", 1)
+                @test name == "bjt"
                 @test params[:type] == 1
             end
 
             @testset "ngspice VBIC levels" begin
+                scope = test_scope(OpenVAF(); dialect=:ngspice)
                 # Level 4
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NPN", 4; input_dialect=:ngspice)
+                name, params = spice_device_type_to_model_name(scope, "NPN", 4)
                 @test name == "vbic_4T_et_cf"
                 @test params[:type] == 1
 
                 # Level 9
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("PNP", 9; input_dialect=:ngspice)
+                name, params = spice_device_type_to_model_name(scope, "PNP", 9)
                 @test name == "vbic_4T_et_cf"
                 @test params[:type] == -1
             end
 
             @testset "Xyce VBIC levels" begin
+                scope = test_scope(OpenVAF(); dialect=:xyce)
                 # Level 11
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NPN", 11; input_dialect=:xyce)
+                name, params = spice_device_type_to_model_name(scope, "NPN", 11)
                 @test name == "vbic_4T_et_cf"
                 @test params[:type] == 1
 
                 # Level 12
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("PNP", 12; input_dialect=:xyce)
+                name, params = spice_device_type_to_model_name(scope, "PNP", 12)
                 @test name == "vbic_4T_et_cf"
                 @test params[:type] == -1
             end
+        end
 
-            @testset "Unsupported BJT level errors" begin
-                @test_throws ErrorException SpiceArmyKnife.spice_device_type_to_va_module("NPN", 99)
-                @test_throws ErrorException SpiceArmyKnife.spice_device_type_to_va_module("NPN", 4; input_dialect=:xyce)
+        @testset "BJT level mappings - Gnucap (sp_ prefix)" begin
+            @testset "Default Gummel-Poon" begin
+                scope = test_scope(Gnucap())
+                name, params = spice_device_type_to_model_name(scope, "NPN")
+                @test name == "sp_bjt"
+                @test params[:type] == 1
+            end
+
+            @testset "Level 1" begin
+                scope = test_scope(Gnucap())
+                name, params = spice_device_type_to_model_name(scope, "PNP", 1)
+                @test name == "sp_bjt"
+                @test params[:type] == -1
             end
         end
 
         @testset "MOSFET level mappings" begin
             @testset "BSIM4 (level 14, 54)" begin
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NMOS", 14)
+                scope = test_scope()
+                name, params = spice_device_type_to_model_name(scope, "NMOS", 14)
                 @test name == "bsim4"
                 @test params[:TYPE] == 1
 
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("PMOS", 54)
+                name, params = spice_device_type_to_model_name(scope, "PMOS", 54)
                 @test name == "bsim4"
                 @test params[:TYPE] == -1
             end
 
             @testset "BSIM3 (level 8, 49)" begin
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NMOS", 8)
+                scope = test_scope()
+                name, params = spice_device_type_to_model_name(scope, "NMOS", 8)
                 @test name == "bsim3"
                 @test params[:TYPE] == 1
 
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("PMOS", 49)
+                name, params = spice_device_type_to_model_name(scope, "PMOS", 49)
                 @test name == "bsim3"
                 @test params[:TYPE] == -1
             end
 
             @testset "BSIMCMG (level 17, 72)" begin
+                scope = test_scope()
                 # Default version (107)
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("NMOS", 17)
+                name, params = spice_device_type_to_model_name(scope, "NMOS", 17)
                 @test name == "bsimcmg107"
                 @test params[:DEVTYPE] == 1
 
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("PMOS", 72, "107")
+                name, params = spice_device_type_to_model_name(scope, "PMOS", 72, "107")
                 @test name == "bsimcmg107"
                 @test params[:DEVTYPE] == 0
             end
 
-            @testset "MOSFET without level errors" begin
-                @test_throws ErrorException SpiceArmyKnife.spice_device_type_to_va_module("NMOS")
+            @testset "MOSFET without level - fallback" begin
+                scope = test_scope()
+                # No error, just returns uppercase device type
+                name, params = spice_device_type_to_model_name(scope, "NMOS")
+                @test name == "NMOS"
+                @test isempty(params)
             end
 
-            @testset "Unsupported MOSFET level errors" begin
-                @test_throws ErrorException SpiceArmyKnife.spice_device_type_to_va_module("NMOS", 99)
+            @testset "Unsupported MOSFET level - fallback" begin
+                scope = test_scope()
+                # No error, just returns uppercase device type
+                name, params = spice_device_type_to_model_name(scope, "NMOS", 99)
+                @test name == "NMOS"
+                @test isempty(params)
             end
 
-            @testset "Unsupported BSIMCMG version errors" begin
-                @test_throws ErrorException SpiceArmyKnife.spice_device_type_to_va_module("NMOS", 17, "200")
+            @testset "Unsupported BSIMCMG version - uses default mapping" begin
+                scope = test_scope()
+                # Version mismatch means it falls back to level-only match (without version constraint)
+                name, params = spice_device_type_to_model_name(scope, "NMOS", 17, "200")
+                @test name == "bsimcmg107"  # Still matches level 17 rule without version
+                @test params[:DEVTYPE] == 1
             end
         end
 
-        @testset "Passive devices" begin
+        @testset "Passive devices - OpenVAF (no prefix)" begin
+            scope = test_scope()
+
             @testset "Resistor" begin
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("R")
-                @test name == "sp_resistor"
+                name, params = spice_device_type_to_model_name(scope, "R")
+                @test name == "resistor"
                 @test isempty(params)
             end
 
             @testset "Capacitor" begin
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("C")
-                @test name == "sp_capacitor"
+                name, params = spice_device_type_to_model_name(scope, "C")
+                @test name == "capacitor"
                 @test isempty(params)
             end
 
             @testset "Inductor" begin
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("L")
-                @test name == "sp_inductor"
+                name, params = spice_device_type_to_model_name(scope, "L")
+                @test name == "inductor"
                 @test isempty(params)
             end
 
             @testset "Diode" begin
-                name, params = SpiceArmyKnife.spice_device_type_to_va_module("D")
+                name, params = spice_device_type_to_model_name(scope, "D")
+                @test name == "diode"
+                @test isempty(params)
+            end
+        end
+
+        @testset "Passive devices - Gnucap (sp_ prefix)" begin
+            scope = test_scope(Gnucap())
+
+            @testset "Resistor" begin
+                name, params = spice_device_type_to_model_name(scope, "R")
+                @test name == "sp_resistor"
+                @test isempty(params)
+            end
+
+            @testset "Diode" begin
+                name, params = spice_device_type_to_model_name(scope, "D")
                 @test name == "sp_diode"
                 @test isempty(params)
             end
         end
 
         @testset "Case insensitivity" begin
-            name_upper, params_upper = SpiceArmyKnife.spice_device_type_to_va_module("NPN", 9)
-            name_lower, params_lower = SpiceArmyKnife.spice_device_type_to_va_module("npn", 9)
+            scope = test_scope(OpenVAF(); dialect=:ngspice)
+            name_upper, params_upper = spice_device_type_to_model_name(scope, "NPN", 9)
+            name_lower, params_lower = spice_device_type_to_model_name(scope, "npn", 9)
             @test name_upper == name_lower
             @test params_upper == params_lower
+        end
+    end
+
+    @testset "VACASK Gaussian functions" begin
+        @testset "gauss() maps to nominal value" begin
+            # VACASK doesn't support gauss() - should return nominal value only
+            spice = ".param r1={gauss(100, 5, 3)}\n"
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, VACASK())
+
+            # Should have just the nominal value (100), not the full function
+            @test occursin("100", output)
+            @test !occursin("gauss", output)
+        end
+
+        @testset "agauss() maps to nominal value" begin
+            # VACASK doesn't support agauss() - should return nominal value only
+            spice = ".param cap={agauss(10p, 0.5p, 3)}\n"
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, VACASK())
+
+            # Should have just the nominal value (10p), not the full function
+            @test occursin("10p", output)  # VACASK is Spectre-style, preserves magnitude suffix
+            @test !occursin("agauss", output)
+        end
+
+        @testset "aunif() maps to nominal value" begin
+            # VACASK doesn't support aunif() - should return nominal value only
+            spice = ".param tol={aunif(50, 5)}\n"
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, VACASK())
+
+            # Should have just the nominal value (50), not the full function
+            @test occursin("50", output)
+            @test !occursin("aunif", output)
+        end
+
+        @testset "unif() maps to nominal value" begin
+            # VACASK doesn't support unif() - should return nominal value only
+            spice = ".param width={unif(2u, 0.1)}\n"
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, VACASK())
+
+            # Should have just the nominal value (2u), not the full function
+            @test occursin("2u", output)  # VACASK is Spectre-style, preserves magnitude suffix
+            @test !occursin("unif", output)
+        end
+
+        @testset "limit() maps to nominal value" begin
+            # VACASK doesn't support limit() - should return nominal value only
+            spice = ".param vth={limit(0.7, 0.05)}\n"
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, VACASK())
+
+            # Should have just the nominal value (0.7), not the full function
+            @test occursin("0.7", output)
+            @test !occursin("limit", output)
+        end
+
+        @testset "ngspice gauss with 1 arg defaults to 1.0" begin
+            # Special case: ngspice gauss(sigma) defaults nominal=1.0
+            spice = ".param factor={gauss(3)}\n"
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false, spice_dialect=:ngspice)
+            output = generate_code(ast, VACASK(); options=Dict{Symbol, Any}(:spice_dialect => :ngspice))
+
+            # Should use default nominal value 1.0
+            @test occursin("1.0", output)
+            @test !occursin("gauss", output)
+        end
+
+        @testset "Gaussian functions in model parameters" begin
+            # Real-world example: model with statistical variation
+            spice = ".model NMOS NMOS vto={gauss(0.7, 0.05, 3)} kp={agauss(100u, 10u, 3)}\n"
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, VACASK())
+
+            # Should have nominal values only
+            @test occursin("0.7", output)
+            @test occursin("100u", output)  # VACASK is Spectre-style, preserves magnitude suffix
+            @test !occursin("gauss", output)
+            @test !occursin("agauss", output)
+        end
+
+        @testset "Other functions preserved" begin
+            # Non-statistical functions should be preserved
+            spice = ".param result={sqrt(100) + sin(3.14)}\n"
+            ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+            output = generate_code(ast, VACASK())
+
+            # Should preserve regular function calls
+            @test occursin("sqrt", output)
+            @test occursin("sin", output)
         end
     end
 

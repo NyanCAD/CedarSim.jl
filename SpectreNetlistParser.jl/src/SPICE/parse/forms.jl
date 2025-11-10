@@ -451,10 +451,10 @@ end
 
 struct SubcktCall <: AbstractInstanceNode
     name::EXPR{HierarchialNode}
-    # TODO: Probably not right:
     nodes::EXPRList{HierarchialNode}
-    model::EXPR{HierarchialNode}
+    model::Maybe{EXPR{HierarchialNode}}  # Model name before parameters
     parameters::EXPRList{Parameter}
+    model_after::Maybe{EXPR{Identifier}}  # Model name after parameters (bare identifier)
     nl::EXPR{Notation}
 end
 

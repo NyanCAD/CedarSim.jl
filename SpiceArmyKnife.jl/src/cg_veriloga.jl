@@ -85,118 +85,6 @@ function hasparam(params, name::String)
     return false
 end
 
-"""
-    spice_device_type_to_va_module(device_type::AbstractString, level=nothing, version=nothing; input_dialect=:ngspice) -> Tuple{String, Dict{Symbol, Any}}
-
-Map SPICE device type codes to Verilog-A module names with level-dependent selection and configuration parameters.
-
-Arguments:
-- `device_type`: SPICE device type string (e.g., "NPN", "NMOS", "D", "R")
-- `level`: Model level parameter (Integer or nothing)
-- `version`: Model version parameter (String or nothing)
-- `input_dialect`: Input simulator dialect (:ngspice or :xyce, default :ngspice)
-
-Returns:
-- Tuple `(name::String, params::Dict{Symbol, Any})` where:
-  - `name`: Verilog-A module name
-  - `params`: Dictionary of parameters needed to configure the model (e.g., `Dict(:type => 1)`)
-
-Errors if device type or level combination is not supported.
-
-Level-dependent mappings:
-
-**BJT (NPN/PNP)**:
-- Level 1 or nothing → "bjt" (Gummel-Poon) with :type parameter (1=NPN, -1=PNP)
-- ngspice: Level 4, 9 → "vbic" with :type parameter
-- Xyce: Level 11, 12 → "vbic" with :type parameter
-
-**MOSFET (NMOS/PMOS)**:
-- Level 14, 54 → "bsim4" with :TYPE parameter (1=NMOS, -1=PMOS)
-- Level 17, 72 → "bsimcmg107" with :DEVTYPE parameter (1=NMOS, 0=PMOS)
-- Level 8, 49 → "bsim3" with :TYPE parameter
-
-**Simple devices** (R, C, L, D): Static mapping, empty parameter dict
-
-Examples:
-```julia
-# BJT
-spice_device_type_to_va_module("NPN")  # ("bjt", Dict(:type => 1))
-spice_device_type_to_va_module("PNP", 9)  # ngspice level 9 → ("vbic", Dict(:type => -1))
-
-# MOSFET
-spice_device_type_to_va_module("NMOS", 14)  # ("bsim4", Dict(:TYPE => 1))
-spice_device_type_to_va_module("PMOS", 17)  # ("bsimcmg107", Dict(:DEVTYPE => 0))
-
-# Passive
-spice_device_type_to_va_module("R")  # ("sp_resistor", Dict())
-```
-"""
-function spice_device_type_to_va_module(device_type::AbstractString, level=nothing, version=nothing; input_dialect=:ngspice)
-    device_upper = uppercase(strip(device_type))
-
-    # BJT level-dependent mapping
-    if device_upper in ("NPN", "PNP")
-        type_value = device_upper == "NPN" ? 1 : -1
-        params = Dict{Symbol, Any}(:type => type_value)
-
-        if level === nothing || level == 1
-            # Default Gummel-Poon model (bjt VA module)
-            return ("sp_bjt", params)
-        elseif input_dialect == :ngspice && level in (4, 9)
-            # ngspice VBIC levels
-            return ("vbic_4T_et_cf", params)
-        elseif input_dialect == :xyce && level in (11, 12)
-            # Xyce VBIC levels
-            return ("vbic_4T_et_cf", params)
-        else
-            error("Unsupported BJT level $level for input dialect $input_dialect")
-        end
-    end
-
-    # MOSFET level-dependent mapping
-    if device_upper in ("NMOS", "PMOS")
-        is_nmos = device_upper == "NMOS"
-
-        if level === nothing
-            error("MOSFET model without level specification - cannot determine model type")
-        elseif level in (14, 54)
-            # BSIM4 - uses TYPE parameter
-            params = Dict{Symbol, Any}(:TYPE => (is_nmos ? 1 : -1))
-            return ("bsim4", params)
-        elseif level in (17, 72)
-            # BSIMCMG - uses DEVTYPE parameter with different convention
-            if version === nothing || version == "107"
-                params = Dict{Symbol, Any}(:DEVTYPE => (is_nmos ? 1 : 0))
-                return ("bsimcmg107", params)
-            else
-                error("Unsupported BSIMCMG version $version (only 107 supported)")
-            end
-        elseif level in (8, 49)
-            # BSIM3 - uses TYPE parameter
-            params = Dict{Symbol, Any}(:TYPE => (is_nmos ? 1 : -1))
-            return ("bsim3", params)
-        else
-            error("Unsupported MOSFET level $level")
-        end
-    end
-
-    # Static mappings for simple devices (no level dependency, no type parameters)
-    static_mapping = Dict(
-        "D" => "sp_diode",
-        "R" => "sp_resistor",
-        "C" => "sp_capacitor",
-        "L" => "sp_inductor",
-        "PSP103_VA" => "PSPNQS103VA",
-    )
-
-    if haskey(static_mapping, device_upper)
-        return (static_mapping[device_upper], Dict{Symbol, Any}())
-    end
-
-    # Fallback: use device type as module name with no type parameters
-    return (device_upper, Dict{Symbol, Any}())
-end
-
 # =============================================================================
 # Verilog-A Handlers - Convert SPICE/Spectre to Verilog-A
 # =============================================================================
@@ -555,11 +443,8 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractVe
     level = haskey(overrides, "level") ? parse(Int, String(overrides["level"])) : nothing
     version = haskey(overrides, "version") ? String(overrides["version"]) : nothing
 
-    # Get input dialect from options (default to ngspice)
-    input_dialect = get(scope.options, :spice_dialect, :ngspice)
-
-    # Map device type to VA module with level-dependent selection (errors if unsupported)
-    va_module, type_params = spice_device_type_to_va_module(device_type, level, version; input_dialect=input_dialect)
+    # Map device type to VA module using data-driven specificity-based matching
+    va_module, type_params = spice_device_type_to_model_name(scope, device_type, level, version)
 
     # Merge type parameters into overrides dict (these configure polarity/type)
     for (param_name, param_value) in type_params
@@ -1343,7 +1228,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.SubcktCall}) where {Sim <: Abstr
     write_indent(scope)
 
     inst_name = String(n.name)
-    subckt_name = String(n.model)
+    subckt_name = String(something(n.model, n.model_after))
 
     # Collect node names (without prefix yet)
     node_names = String[]

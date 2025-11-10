@@ -1119,10 +1119,29 @@ function parse_subckt_call(ps, type=SubcktCall)
     if isempty(nodes)
         return @trynext error!(ps, UnexpectedToken, HierarchialNode)
     end
-    model = pop!(nodes)
+
     @trynext parameters = parse_parameter_list(ps)
+
+    # Check if last parameter is actually the model name (no '=' sign)
+    model = nothing
+    model_after = nothing
+    if !isempty(parameters)
+        last_param = parameters[end]
+        if last_param.eq === nothing && last_param.val === nothing
+            # Last "parameter" is actually the model name appearing after parameters
+            param_node = pop!(parameters)
+            model_after = param_node.name  # Extract just the identifier
+        else
+            # Model appears before parameters (standard position)
+            model = pop!(nodes)
+        end
+    else
+        # No parameters, model must be in nodes
+        model = pop!(nodes)
+    end
+
     @trynext nl = accept_newline(ps)
-    return EXPR(type(name, nodes, model, parameters, nl))
+    return EXPR(type(name, nodes, model, parameters, model_after, nl))
 end
 
 function parse_s_parameter_element(ps)

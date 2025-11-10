@@ -176,6 +176,184 @@ Returns true if the list has more than 5 items.
 """
 should_format_multiline(items) = length(items) > 5
 
+"""
+    DeviceMapping
+
+Represents a mapping from SPICE device type to model name with optional constraints.
+
+Fields:
+- `spice_type`: SPICE device type code (e.g., "NMOS", "D", "R")
+- `model_name`: Target model/module name (e.g., "bsim4", "diode", "sp_resistor")
+- `level`: Optional level constraint (e.g., 14 for BSIM4)
+- `version`: Optional version constraint (e.g., "107" for BSIMCMG107)
+- `input_dialect`: Optional input dialect constraint (:ngspice, :xyce, etc.)
+- `output_sim`: Optional output simulator type constraint (for simulator-specific overrides)
+- `params`: Parameters to inject into model (e.g., Dict(:TYPE => 1))
+
+Specificity: Rules with more non-nothing constraints are more specific and take precedence.
+"""
+@kwdef struct DeviceMapping
+    spice_type::String
+    model_name::String
+    level::Union{Int, Nothing} = nothing
+    version::Union{String, Nothing} = nothing
+    input_dialect::Union{Symbol, Nothing} = nothing
+    output_sim::Union{Type{<:AbstractSimulator}, Nothing} = nothing
+    params::Dict{Symbol, Any} = Dict{Symbol, Any}()
+end
+
+const DEVICE_MAPPINGS = [
+    # =============================================================================
+    # Simple Devices - Default mappings (lowercase, no prefix)
+    # =============================================================================
+    DeviceMapping(spice_type="D", model_name="diode"),
+    DeviceMapping(spice_type="R", model_name="resistor"),
+    DeviceMapping(spice_type="C", model_name="capacitor"),
+    DeviceMapping(spice_type="L", model_name="inductor"),
+
+    # =============================================================================
+    # Simple Devices - Gnucap overrides (sp_ prefix)
+    # =============================================================================
+    DeviceMapping(spice_type="D", model_name="sp_diode", output_sim=Gnucap),
+    DeviceMapping(spice_type="R", model_name="sp_resistor", output_sim=Gnucap),
+    DeviceMapping(spice_type="C", model_name="sp_capacitor", output_sim=Gnucap),
+    DeviceMapping(spice_type="L", model_name="sp_inductor", output_sim=Gnucap),
+
+    # =============================================================================
+    # BJT - Default (Gummel-Poon)
+    # =============================================================================
+    DeviceMapping(spice_type="NPN", model_name="bjt", level=1, params=Dict(:type => 1)),
+    DeviceMapping(spice_type="PNP", model_name="bjt", level=1, params=Dict(:type => -1)),
+    DeviceMapping(spice_type="NPN", model_name="bjt", params=Dict(:type => 1)),  # no level = default
+    DeviceMapping(spice_type="PNP", model_name="bjt", params=Dict(:type => -1)),  # no level = default
+
+    # =============================================================================
+    # BJT - Gnucap overrides (sp_ prefix)
+    # =============================================================================
+    DeviceMapping(spice_type="NPN", model_name="sp_bjt", level=1, output_sim=Gnucap, params=Dict(:type => 1)),
+    DeviceMapping(spice_type="PNP", model_name="sp_bjt", level=1, output_sim=Gnucap, params=Dict(:type => -1)),
+    DeviceMapping(spice_type="NPN", model_name="sp_bjt", output_sim=Gnucap, params=Dict(:type => 1)),
+    DeviceMapping(spice_type="PNP", model_name="sp_bjt", output_sim=Gnucap, params=Dict(:type => -1)),
+
+    # =============================================================================
+    # BJT - VBIC (ngspice levels 4, 9)
+    # =============================================================================
+    DeviceMapping(spice_type="NPN", model_name="vbic_4T_et_cf", level=4, input_dialect=:ngspice, params=Dict(:type => 1)),
+    DeviceMapping(spice_type="PNP", model_name="vbic_4T_et_cf", level=4, input_dialect=:ngspice, params=Dict(:type => -1)),
+    DeviceMapping(spice_type="NPN", model_name="vbic_4T_et_cf", level=9, input_dialect=:ngspice, params=Dict(:type => 1)),
+    DeviceMapping(spice_type="PNP", model_name="vbic_4T_et_cf", level=9, input_dialect=:ngspice, params=Dict(:type => -1)),
+
+    # =============================================================================
+    # BJT - VBIC (Xyce levels 11, 12)
+    # =============================================================================
+    DeviceMapping(spice_type="NPN", model_name="vbic_4T_et_cf", level=11, input_dialect=:xyce, params=Dict(:type => 1)),
+    DeviceMapping(spice_type="PNP", model_name="vbic_4T_et_cf", level=11, input_dialect=:xyce, params=Dict(:type => -1)),
+    DeviceMapping(spice_type="NPN", model_name="vbic_4T_et_cf", level=12, input_dialect=:xyce, params=Dict(:type => 1)),
+    DeviceMapping(spice_type="PNP", model_name="vbic_4T_et_cf", level=12, input_dialect=:xyce, params=Dict(:type => -1)),
+
+    # =============================================================================
+    # MOSFET - BSIM4 (levels 14, 54)
+    # =============================================================================
+    DeviceMapping(spice_type="NMOS", model_name="bsim4", level=14, params=Dict(:TYPE => 1)),
+    DeviceMapping(spice_type="PMOS", model_name="bsim4", level=14, params=Dict(:TYPE => -1)),
+    DeviceMapping(spice_type="NMOS", model_name="bsim4", level=54, params=Dict(:TYPE => 1)),
+    DeviceMapping(spice_type="PMOS", model_name="bsim4", level=54, params=Dict(:TYPE => -1)),
+
+    # =============================================================================
+    # MOSFET - BSIMCMG107 (levels 17, 72)
+    # =============================================================================
+    DeviceMapping(spice_type="NMOS", model_name="bsimcmg107", level=17, version="107", params=Dict(:DEVTYPE => 1)),
+    DeviceMapping(spice_type="PMOS", model_name="bsimcmg107", level=17, version="107", params=Dict(:DEVTYPE => 0)),
+    DeviceMapping(spice_type="NMOS", model_name="bsimcmg107", level=72, version="107", params=Dict(:DEVTYPE => 1)),
+    DeviceMapping(spice_type="PMOS", model_name="bsimcmg107", level=72, version="107", params=Dict(:DEVTYPE => 0)),
+    # Without version constraint (default to 107)
+    DeviceMapping(spice_type="NMOS", model_name="bsimcmg107", level=17, params=Dict(:DEVTYPE => 1)),
+    DeviceMapping(spice_type="PMOS", model_name="bsimcmg107", level=17, params=Dict(:DEVTYPE => 0)),
+    DeviceMapping(spice_type="NMOS", model_name="bsimcmg107", level=72, params=Dict(:DEVTYPE => 1)),
+    DeviceMapping(spice_type="PMOS", model_name="bsimcmg107", level=72, params=Dict(:DEVTYPE => 0)),
+
+    # =============================================================================
+    # MOSFET - BSIM3 (levels 8, 49)
+    # =============================================================================
+    DeviceMapping(spice_type="NMOS", model_name="bsim3", level=8, params=Dict(:TYPE => 1)),
+    DeviceMapping(spice_type="PMOS", model_name="bsim3", level=8, params=Dict(:TYPE => -1)),
+    DeviceMapping(spice_type="NMOS", model_name="bsim3", level=49, params=Dict(:TYPE => 1)),
+    DeviceMapping(spice_type="PMOS", model_name="bsim3", level=49, params=Dict(:TYPE => -1)),
+
+    # =============================================================================
+    # Special Cases
+    # =============================================================================
+    DeviceMapping(spice_type="PSP103_VA", model_name="PSPNQS103VA"),
+]
+
+"""
+    mapping_specificity(mapping::DeviceMapping) -> Int
+
+Calculate the specificity score of a device mapping by counting non-nothing constraints.
+Higher scores indicate more specific mappings that should take precedence.
+"""
+function mapping_specificity(mapping::DeviceMapping)
+    score = 0
+    mapping.level !== nothing && (score += 1)
+    mapping.version !== nothing && (score += 1)
+    mapping.input_dialect !== nothing && (score += 1)
+    mapping.output_sim !== nothing && (score += 1)
+    return score
+end
+
+"""
+    spice_device_type_to_model_name(scope::CodeGenScope{Sim}, spice_type::String, level=nothing, version=nothing) where {Sim <: AbstractSimulator}
+
+Map SPICE device type to model name using specificity-based matching.
+
+Returns a tuple of `(model_name::String, params::Dict{Symbol, Any})` where:
+- `model_name`: The target model/module name
+- `params`: Dictionary of parameters to inject (e.g., Dict(:TYPE => 1))
+
+Matching algorithm:
+1. Filter mappings where spice_type matches (case-insensitive)
+2. Filter mappings where ALL specified constraints match:
+   - If mapping.level !== nothing → level must match
+   - If mapping.version !== nothing → version must match
+   - If mapping.input_dialect !== nothing → input_dialect must match
+   - If mapping.output_sim !== nothing → Sim must be a subtype
+3. Score by counting non-nothing constraints (more = more specific)
+4. Return highest scoring mapping, or uppercase(spice_type) as fallback
+"""
+function spice_device_type_to_model_name(scope::CodeGenScope{Sim}, spice_type::String, level=nothing, version=nothing) where {Sim <: AbstractSimulator}
+    device_upper = uppercase(strip(spice_type))
+    input_dialect = get(scope.options, :spice_dialect, nothing)
+
+    best_mapping = nothing
+    best_specificity = -1
+
+    for mapping in DEVICE_MAPPINGS
+        # spice_type must match (case-insensitive)
+        uppercase(mapping.spice_type) != device_upper && continue
+
+        # ALL specified constraints must match
+        mapping.level !== nothing && mapping.level != level && continue
+        mapping.version !== nothing && string(version) != mapping.version && continue
+        mapping.input_dialect !== nothing && mapping.input_dialect != input_dialect && continue
+        mapping.output_sim !== nothing && !(Sim <: mapping.output_sim) && continue
+
+        # Calculate specificity and keep the most specific match
+        specificity = mapping_specificity(mapping)
+        if specificity > best_specificity
+            best_specificity = specificity
+            best_mapping = mapping
+        end
+    end
+
+    # Return best match or fallback
+    if best_mapping !== nothing
+        return (best_mapping.model_name, best_mapping.params)
+    else
+        return (device_upper, Dict{Symbol, Any}())
+    end
+end
+
+
 # =============================================================================
 # Default Implementation - Preserve Original Formatting
 # =============================================================================
@@ -477,6 +655,7 @@ end
 
 
 export CodeGenScope, generate_code, write_indent, write_terminal, newline, with_indent
+export DeviceMapping, spice_device_type_to_model_name
 
 # Include language-specific code generators
 include("cg_spice.jl")
@@ -485,6 +664,6 @@ include("cg_veriloga.jl")
 
 # Export simulator types and traits from this module
 export AbstractSimulator, AbstractSpiceSimulator, AbstractSpectreSimulator, AbstractVerilogASimulator
-export Ngspice, Hspice, Pspice, Xyce, SpectreADE, OpenVAF, Gnucap
+export Ngspice, Hspice, Pspice, Xyce, SpectreADE, VACASK, OpenVAF, Gnucap
 export language, hasdocprops, doc_only_params, temperature_param_mapping, operator_replacement
 export symbol_from_simulator, simulator_from_symbol

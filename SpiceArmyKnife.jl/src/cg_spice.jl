@@ -286,7 +286,10 @@ function (scope::CodeGenScope{<:AbstractSpiceSimulator})(n::SNode{SP.SubcktCall}
         scope(node)
     end
     print(scope.io, " ")
-    scope(n.model)
+
+    # Always output model in standard position (before parameters)
+    scope(something(n.model, n.model_after))
+
     for param in n.parameters
         print(scope.io, " ")
         scope(param)
