@@ -212,12 +212,17 @@ const DEVICE_MAPPINGS = [
     DeviceMapping(spice_type="L", model_name="inductor"),
 
     # =============================================================================
-    # Simple Devices - Gnucap overrides (sp_ prefix)
+    # Simple Devices - VADistiller overrides (sp_ prefix)
     # =============================================================================
     DeviceMapping(spice_type="D", model_name="sp_diode", output_sim=Gnucap),
     DeviceMapping(spice_type="R", model_name="sp_resistor", output_sim=Gnucap),
     DeviceMapping(spice_type="C", model_name="sp_capacitor", output_sim=Gnucap),
     DeviceMapping(spice_type="L", model_name="sp_inductor", output_sim=Gnucap),
+
+    DeviceMapping(spice_type="D", model_name="sp_diode", output_sim=VACASK),
+    DeviceMapping(spice_type="R", model_name="sp_resistor", output_sim=VACASK),
+    DeviceMapping(spice_type="C", model_name="sp_capacitor", output_sim=VACASK),
+    DeviceMapping(spice_type="L", model_name="sp_inductor", output_sim=VACASK),
 
     # =============================================================================
     # BJT - Default (Gummel-Poon)

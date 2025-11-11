@@ -187,6 +187,11 @@ function (scope::CodeGenScope{Sim})(n::SNode{<:SP.Terminal}) where {Sim <: Abstr
     print(scope.io, String(n))
 end
 
+# SPICE Identifier: lowercase for Spectre (case-sensitive, matches parameter declarations)
+function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Identifier})
+    print(scope.io, lowercase(String(n)))
+end
+
 # SPICE NodeName: base node name
 function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.NodeName})
     scope(n.name)
