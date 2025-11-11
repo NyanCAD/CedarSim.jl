@@ -226,23 +226,67 @@ end
 """
     (scope::CodeGenScope{Sim})(n::SNode{SC.Parameter}) where {Sim <: AbstractSpectreSimulator}
 
-Spectre parameter handler with parameter name conversion support.
+Spectre parameter handler (Spectre → Spectre) with parameter mapping/filtering support.
 
-Applies temperature_param_mapping trait to convert parameter names as needed
-(e.g., tref → tnom for VACASK).
+Applies parameter_mapping trait to handle dialect-specific transformations
+(e.g., tref → tnom for VACASK, or filtering doc params).
+
+Note: Filtered parameters (mapped to nothing) are silently skipped.
 """
 function (scope::CodeGenScope{Sim})(n::SNode{SC.Parameter}) where {Sim <: AbstractSpectreSimulator}
     param_name_sym = Symbol(lowercase(String(n.name)))
 
-    # Check if parameter name needs conversion (e.g., tref → tnom for VACASK)
-    converted_name = convert_param_name(scope, param_name_sym)
+    # Apply parameter mapping/filtering
+    mapped_name = apply_parameter_mapping(scope, param_name_sym)
 
-    if converted_name != param_name_sym
-        # Parameter name was converted - output new name (preserve case style)
-        print(scope.io, String(converted_name))
+    # If mapping returns nothing, skip this parameter (don't output)
+    if mapped_name === nothing
+        return
+    end
+
+    if mapped_name != param_name_sym
+        # Parameter name was converted - output new name (lowercase for Spectre)
+        print(scope.io, String(mapped_name))
     else
         # No conversion - output original name as-is
         write_terminal(scope, n.name)
+    end
+
+    if n.val !== nothing
+        print(scope.io, "=")
+        scope(n.val)
+    end
+end
+
+"""
+    (scope::CodeGenScope{Sim})(n::SNode{SP.Parameter}) where {Sim <: AbstractSpectreSimulator}
+
+SPICE parameter handler (SPICE → Spectre) with parameter mapping/filtering support.
+
+Applies parameter_mapping trait to handle dialect-specific transformations
+(e.g., tref → tnom for VACASK, or filtering doc params).
+
+Note: Filtered parameters (mapped to nothing) are silently skipped.
+Spectre style uses lowercase parameter names.
+"""
+function (scope::CodeGenScope{Sim})(n::SNode{SP.Parameter}) where {Sim <: AbstractSpectreSimulator}
+    param_name_sym = Symbol(lowercase(String(n.name)))
+
+    # Apply parameter mapping/filtering
+    mapped_name = apply_parameter_mapping(scope, param_name_sym)
+
+    # If mapping returns nothing, skip this parameter (don't output)
+    if mapped_name === nothing
+        return
+    end
+
+    # Always output lowercase for Spectre style (whether mapped or not)
+    if mapped_name != param_name_sym
+        # Parameter name was converted - output new name
+        print(scope.io, String(mapped_name))
+    else
+        # No conversion - output original name in lowercase
+        print(scope.io, String(param_name_sym))
     end
 
     if n.val !== nothing
