@@ -228,6 +228,16 @@ function temperature_param_mapping(::Xyce)
     )
 end
 
+# VACASK requires conversion from ngspice parameter names
+# Note: VACASK Verilog-A models use tnom as the primary parameter.
+# Some models (diode, BJT) provide tref as an aliasparam for compatibility,
+# but not all models (e.g., resistor) have this alias. Always use tnom.
+function temperature_param_mapping(::VACASK)
+    Dict{Symbol, Symbol}(
+        :tref => :tnom,  # ngspice compatibility alias → primary parameter
+    )
+end
+
 # =============================================================================
 # Operator Replacement Trait
 # =============================================================================

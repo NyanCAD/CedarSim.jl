@@ -195,6 +195,61 @@ I1 (n1 n2 vdd gnd) inv
             end
         end
 
+        @testset "VACASK temperature parameter conversion" begin
+            @testset "VACASK converts tref to tnom" begin
+                # VACASK Verilog-A models use tnom as the primary parameter
+                # ngspice models may use tref as a compatibility alias
+                spice = ".model DMOD D IS=1E-12 TREF=27\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, VACASK())
+
+                # Should convert TREF → tnom
+                @test occursin("tnom=27", output)
+                @test !occursin("tref", lowercase(output))
+            end
+
+            @testset "VACASK converts TREF (uppercase) to tnom" begin
+                # Test case insensitive conversion
+                spice = ".model DMOD D IS=1E-12 TREF=25\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, VACASK())
+
+                @test occursin("tnom=25", output)
+                @test !occursin("TREF", output)
+            end
+
+            @testset "VACASK preserves tnom unchanged" begin
+                # If the model already uses tnom, keep it as-is
+                spice = ".model DMOD D IS=1E-12 TNOM=30\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, VACASK())
+
+                @test occursin("tnom=30", output)
+            end
+
+            @testset "VACASK converts tref in instances" begin
+                # Test instance parameter conversion
+                spice = "D1 1 0 DMOD TREF=27\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, VACASK())
+
+                @test occursin("tnom=27", output)
+                @test !occursin("tref", lowercase(output))
+            end
+
+            @testset "VACASK mixed parameters with tref" begin
+                # Test that other parameters are preserved while tref is converted
+                spice = ".model RMOD R RSH=10 TREF=25 TC1=0.001\n"
+                ast = SpectreNetlistParser.parse(IOBuffer(spice); start_lang=:spice, implicit_title=false)
+                output = generate_code(ast, VACASK())
+
+                @test occursin("rsh=10", lowercase(output))
+                @test occursin("tnom=25", output)
+                @test occursin("tc1=0.001", lowercase(output))
+                @test !occursin("tref", lowercase(output))
+            end
+        end
+
         @testset "Operator conversion" begin
             @testset "gnucap converts ** to pow()" begin
                 # Gnucap does not support ** operator, requires pow() function

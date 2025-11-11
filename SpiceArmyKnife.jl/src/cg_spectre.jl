@@ -220,6 +220,38 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Condition
 end
 
 # =============================================================================
+# Spectre Parameter Conversion
+# =============================================================================
+
+"""
+    (scope::CodeGenScope{Sim})(n::SNode{SC.Parameter}) where {Sim <: AbstractSpectreSimulator}
+
+Spectre parameter handler with parameter name conversion support.
+
+Applies temperature_param_mapping trait to convert parameter names as needed
+(e.g., tref → tnom for VACASK).
+"""
+function (scope::CodeGenScope{Sim})(n::SNode{SC.Parameter}) where {Sim <: AbstractSpectreSimulator}
+    param_name_sym = Symbol(lowercase(String(n.name)))
+
+    # Check if parameter name needs conversion (e.g., tref → tnom for VACASK)
+    converted_name = convert_param_name(scope, param_name_sym)
+
+    if converted_name != param_name_sym
+        # Parameter name was converted - output new name (preserve case style)
+        print(scope.io, String(converted_name))
+    else
+        # No conversion - output original name as-is
+        write_terminal(scope, n.name)
+    end
+
+    if n.val !== nothing
+        print(scope.io, "=")
+        scope(n.val)
+    end
+end
+
+# =============================================================================
 # SPICE to Spectre Conversion - Structural Elements
 # =============================================================================
 
