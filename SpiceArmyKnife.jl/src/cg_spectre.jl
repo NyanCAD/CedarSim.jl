@@ -224,44 +224,11 @@ end
 # =============================================================================
 
 """
-    (scope::CodeGenScope{Sim})(n::SNode{SC.Parameter}) where {Sim <: AbstractSpectreSimulator}
+    (scope::CodeGenScope{Sim})(n::SNode{<:Union{SC.Parameter, SP.Parameter}}) where {Sim <: AbstractSpectreSimulator}
 
-Spectre parameter handler (Spectre → Spectre) with parameter mapping/filtering support.
+Unified parameter handler for Spectre simulators with mapping/filtering support.
 
-Applies parameter_mapping trait to handle dialect-specific transformations
-(e.g., tref → tnom for VACASK, or filtering doc params).
-
-Note: Filtered parameters (mapped to nothing) are silently skipped.
-"""
-function (scope::CodeGenScope{Sim})(n::SNode{SC.Parameter}) where {Sim <: AbstractSpectreSimulator}
-    param_name_sym = Symbol(lowercase(String(n.name)))
-
-    # Apply parameter mapping/filtering
-    mapped_name = apply_parameter_mapping(scope, param_name_sym)
-
-    # If mapping returns nothing, skip this parameter (don't output)
-    if mapped_name === nothing
-        return
-    end
-
-    if mapped_name != param_name_sym
-        # Parameter name was converted - output new name (lowercase for Spectre)
-        print(scope.io, String(mapped_name))
-    else
-        # No conversion - output original name as-is
-        write_terminal(scope, n.name)
-    end
-
-    if n.val !== nothing
-        print(scope.io, "=")
-        scope(n.val)
-    end
-end
-
-"""
-    (scope::CodeGenScope{Sim})(n::SNode{SP.Parameter}) where {Sim <: AbstractSpectreSimulator}
-
-SPICE parameter handler (SPICE → Spectre) with parameter mapping/filtering support.
+Handles both Spectre → Spectre and SPICE → Spectre parameter conversions.
 
 Applies parameter_mapping trait to handle dialect-specific transformations
 (e.g., tref → tnom for VACASK, or filtering doc params).
@@ -269,7 +236,7 @@ Applies parameter_mapping trait to handle dialect-specific transformations
 Note: Filtered parameters (mapped to nothing) are silently skipped.
 Spectre style uses lowercase parameter names.
 """
-function (scope::CodeGenScope{Sim})(n::SNode{SP.Parameter}) where {Sim <: AbstractSpectreSimulator}
+function (scope::CodeGenScope{Sim})(n::SNode{<:Union{SC.Parameter, SP.Parameter}}) where {Sim <: AbstractSpectreSimulator}
     param_name_sym = Symbol(lowercase(String(n.name)))
 
     # Apply parameter mapping/filtering
