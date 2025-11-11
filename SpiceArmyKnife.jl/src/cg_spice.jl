@@ -90,18 +90,18 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractSp
         param_name_str = String(param.name)
         param_name_sym = Symbol(lowercase(param_name_str))
 
-        # Use trait-based filtering for documentation parameters
-        if should_filter_param(scope, param_name_sym)
-            continue  # Skip this parameter
+        # Apply parameter mapping/filtering
+        mapped_name = apply_parameter_mapping(scope, param_name_sym)
+
+        # If mapping returns nothing, filter out this parameter
+        if mapped_name === nothing
+            continue
         end
 
-        # Check if parameter name needs conversion (e.g., PSPICE � Ngspice)
-        converted_name = convert_param_name(scope, param_name_sym)
-
         print(scope.io, " ")
-        if converted_name != param_name_sym
-            # Parameter name was converted - output new name
-            print(scope.io, uppercase(string(converted_name)))
+        if mapped_name != param_name_sym
+            # Parameter name was converted - output new name (uppercase for SPICE)
+            print(scope.io, uppercase(string(mapped_name)))
         else
             # No conversion - output original name with original casing
             scope(param.name)

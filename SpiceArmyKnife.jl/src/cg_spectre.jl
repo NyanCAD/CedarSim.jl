@@ -220,6 +220,49 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Condition
 end
 
 # =============================================================================
+# Spectre Parameter Conversion
+# =============================================================================
+
+"""
+    (scope::CodeGenScope{Sim})(n::SNode{<:Union{SC.Parameter, SP.Parameter}}) where {Sim <: AbstractSpectreSimulator}
+
+Unified parameter handler for Spectre simulators with mapping/filtering support.
+
+Handles both Spectre → Spectre and SPICE → Spectre parameter conversions.
+
+Applies parameter_mapping trait to handle dialect-specific transformations
+(e.g., tref → tnom for VACASK, or filtering doc params).
+
+Note: Filtered parameters (mapped to nothing) are silently skipped.
+Spectre style uses lowercase parameter names.
+"""
+function (scope::CodeGenScope{Sim})(n::SNode{<:Union{SC.Parameter, SP.Parameter}}) where {Sim <: AbstractSpectreSimulator}
+    param_name_sym = Symbol(lowercase(String(n.name)))
+
+    # Apply parameter mapping/filtering
+    mapped_name = apply_parameter_mapping(scope, param_name_sym)
+
+    # If mapping returns nothing, skip this parameter (don't output)
+    if mapped_name === nothing
+        return
+    end
+
+    # Always output lowercase for Spectre style (whether mapped or not)
+    if mapped_name != param_name_sym
+        # Parameter name was converted - output new name
+        print(scope.io, String(mapped_name))
+    else
+        # No conversion - output original name in lowercase
+        print(scope.io, String(param_name_sym))
+    end
+
+    if n.val !== nothing
+        print(scope.io, "=")
+        scope(n.val)
+    end
+end
+
+# =============================================================================
 # SPICE to Spectre Conversion - Structural Elements
 # =============================================================================
 

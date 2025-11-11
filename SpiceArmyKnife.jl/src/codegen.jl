@@ -528,40 +528,43 @@ function write_leading_trivia(scope::CodeGenScope, n::SNode)
 end
 
 """
-    should_filter_param(scope::CodeGenScope{Sim}, param_name::Symbol) where {Sim}
+    apply_parameter_mapping(scope::CodeGenScope{Sim}, param_name::Symbol) where {Sim}
 
-Check if a parameter should be filtered out for the target simulator.
-Uses the hasdocprops trait to determine if documentation parameters should be kept.
+Apply parameter mapping/filtering for the target simulator.
+
+Uses the parameter_mapping trait to handle dialect-specific parameter transformations:
+- Returns `nothing` if parameter should be filtered out
+- Returns new Symbol if parameter should be renamed
+- Returns original parameter name if no mapping applies
+
+The parameter name matching is case-insensitive.
+
+Examples:
+```julia
+# Ngspice filters documentation parameters
+apply_parameter_mapping(scope, :iave)      # => nothing (filtered)
+
+# Ngspice converts PSPICE temperature parameters
+apply_parameter_mapping(scope, :t_measured) # => :tnom
+
+# VACASK converts ngspice aliases
+apply_parameter_mapping(scope, :tref)      # => :tnom
+
+# No mapping - return original
+apply_parameter_mapping(scope, :resistance) # => :resistance
+```
 """
-function should_filter_param(scope::CodeGenScope{Sim}, param_name::Symbol) where {Sim}
-    # If simulator supports doc props, don't filter anything
-    if hasdocprops(Sim())
-        return false
-    end
+function apply_parameter_mapping(scope::CodeGenScope{Sim}, param_name::Symbol) where {Sim}
+    # Get parameter mapping for this simulator
+    mapping = parameter_mapping(Sim())
 
-    # Otherwise, check if this param is a doc-only param
-    return param_name ∈ doc_only_params(Sim())
-end
-
-"""
-    convert_param_name(scope::CodeGenScope{Sim}, param_name::Symbol) where {Sim}
-
-Convert a parameter name if needed for the target simulator.
-Uses the temperature_param_mapping trait to handle PSPICE → Ngspice conversions.
-
-Returns the converted parameter name, or the original if no conversion is needed.
-"""
-function convert_param_name(scope::CodeGenScope{Sim}, param_name::Symbol) where {Sim}
-    # Get temperature parameter mapping for this simulator
-    temp_mapping = temperature_param_mapping(Sim())
-
-    # Check if this parameter needs conversion
+    # Check if this parameter has a mapping (case-insensitive)
     param_lower = Symbol(lowercase(string(param_name)))
-    if haskey(temp_mapping, param_lower)
-        return temp_mapping[param_lower]
+    if haskey(mapping, param_lower)
+        return mapping[param_lower]  # Can be Symbol or nothing
     end
 
-    # No conversion needed
+    # No mapping - return original
     return param_name
 end
 
@@ -665,5 +668,5 @@ include("cg_veriloga.jl")
 # Export simulator types and traits from this module
 export AbstractSimulator, AbstractSpiceSimulator, AbstractSpectreSimulator, AbstractVerilogASimulator
 export Ngspice, Hspice, Pspice, Xyce, SpectreADE, VACASK, OpenVAF, Gnucap
-export language, hasdocprops, doc_only_params, temperature_param_mapping, operator_replacement
+export language, parameter_mapping, operator_replacement
 export symbol_from_simulator, simulator_from_symbol

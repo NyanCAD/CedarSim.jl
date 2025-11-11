@@ -136,95 +136,96 @@ language(::AbstractSpectreSimulator) = :spectre
 language(::AbstractVerilogASimulator) = :verilog_a
 
 # =============================================================================
-# Documentation Property Trait
+# Parameter Mapping and Filtering Trait
 # =============================================================================
 
 """
-    hasdocprops(simulator::AbstractSimulator) -> Bool
+    parameter_mapping(simulator::AbstractSimulator) -> Dict{Symbol, Union{Symbol, Nothing}}
 
-Returns true if the simulator supports documentation-only model parameters.
+Returns a mapping of parameter names for dialect conversion and filtering.
 
-Documentation parameters are metadata fields like:
-- `iave`: Average current
-- `vpk`: Peak voltage
-- `mfg`: Manufacturer code
-- `type`: Device type description
-- `icrating`: Current rating
-- `vceo`: Collector-emitter voltage
+Maps lowercase parameter names to their target names or nothing for filtering:
+- `param => :new_param` - rename parameter
+- `param => nothing` - filter out (remove) parameter
 
-These parameters document the device but don't affect simulation.
-Ngspice does NOT recognize these and will error if they are present.
-HSPICE and PSpice support them.
+This unified trait handles:
+- Documentation parameter filtering (e.g., iave, vpk, mfg for Ngspice)
+- Parameter name conversion (e.g., PSPICE T_MEASURED → tnom for Ngspice)
+- Dialect-specific parameter aliases (e.g., tref → tnom for VACASK)
 
-Default: false (most simulators don't support doc props)
+Default: empty dict (no mapping or filtering)
+
+Examples:
+```julia
+# Ngspice filters doc params and converts PSPICE temperature params
+parameter_mapping(Ngspice()) # => Dict(
+    :iave => nothing,        # Filter doc param
+    :t_measured => :tnom,    # Convert PSPICE param
+    ...
+)
+
+# HSPICE/PSpice preserve all parameters
+parameter_mapping(Hspice()) # => Dict() (empty, no changes)
+
+# VACASK converts ngspice aliases
+parameter_mapping(VACASK()) # => Dict(:tref => :tnom)
+```
+
+Reference:
+- ngspice inpcompat.c:1061-1075 (PSPICE compatibility)
+- VACASK Verilog-A models (tnom as primary parameter)
 """
-hasdocprops(::AbstractSimulator) = false
-
-# HSPICE and PSpice support documentation properties
-hasdocprops(::Union{Hspice, Pspice}) = true
-
-"""
-    doc_only_params(simulator::AbstractSimulator) -> Set{Symbol}
-
-Returns the set of parameter names that are documentation-only for this simulator.
-These should be filtered out when generating netlists for simulators that don't support them.
-"""
-function doc_only_params(sim::AbstractSimulator)
-    if hasdocprops(sim)
-        return Set{Symbol}()  # No filtering needed
-    else
-        return Set{Symbol}([
-            :iave,      # Average current (documentation)
-            :vpk,       # Peak voltage (documentation)
-            :mfg,       # Manufacturer code (documentation)
-            :type,      # Device type description (documentation)
-            :icrating,  # Current rating (documentation)
-            :vceo,      # Collector-emitter voltage (documentation)
-        ])
-    end
+function parameter_mapping(::AbstractSimulator)
+    # Default: no mapping or filtering
+    return Dict{Symbol, Union{Symbol, Nothing}}()
 end
 
-# =============================================================================
-# PSPICE Temperature Parameter Conversion Trait
-# =============================================================================
+# Ngspice filters documentation parameters and converts PSPICE temperature parameters
+function parameter_mapping(::Ngspice)
+    Dict{Symbol, Union{Symbol, Nothing}}(
+        # Documentation parameters - filter out (Ngspice doesn't support)
+        :iave => nothing,        # Average current (documentation)
+        :vpk => nothing,         # Peak voltage (documentation)
+        :mfg => nothing,         # Manufacturer code (documentation)
+        :type => nothing,        # Device type description (documentation)
+        :icrating => nothing,    # Current rating (documentation)
+        :vceo => nothing,        # Collector-emitter voltage (documentation)
 
-"""
-    temperature_param_mapping(simulator::AbstractSimulator) -> Dict{Symbol, Symbol}
-
-Returns a mapping of PSPICE-specific temperature parameter names to standard SPICE names.
-
-PSPICE uses proprietary temperature parameter names that need conversion for other simulators:
-- `T_ABS` → `temp` (absolute temperature)
-- `T_REL_GLOBAL` → `dtemp` (relative temperature offset)
-- `T_MEASURED` → `TNOM` (nominal/measurement temperature)
-
-This trait enables automatic parameter name conversion when generating netlists.
-
-Default behavior (for PSPICE/HSPICE): Returns empty dict (no conversion)
-Ngspice/Xyce: Returns conversion mapping
-
-Reference: ngspice inpcompat.c:1061-1075 (PSPICE compatibility mode)
-"""
-function temperature_param_mapping(::AbstractSimulator)
-    # Default: no conversion (preserve PSPICE names)
-    return Dict{Symbol, Symbol}()
-end
-
-# Ngspice requires PSPICE temperature parameters to be converted
-function temperature_param_mapping(::Ngspice)
-    Dict{Symbol, Symbol}(
-        :t_abs => :temp,           # Absolute temperature
-        :t_rel_global => :dtemp,   # Relative temperature (delta)
-        :t_measured => :tnom,      # Nominal/measurement temperature
+        # PSPICE temperature parameter conversions
+        :t_abs => :temp,         # Absolute temperature
+        :t_rel_global => :dtemp, # Relative temperature (delta)
+        :t_measured => :tnom,    # Nominal/measurement temperature
     )
 end
 
-# Xyce also requires conversion (similar to Ngspice)
-function temperature_param_mapping(::Xyce)
-    Dict{Symbol, Symbol}(
+# Xyce has similar requirements to Ngspice
+function parameter_mapping(::Xyce)
+    Dict{Symbol, Union{Symbol, Nothing}}(
+        # Documentation parameters - filter out
+        :iave => nothing,
+        :vpk => nothing,
+        :mfg => nothing,
+        :type => nothing,
+        :icrating => nothing,
+        :vceo => nothing,
+
+        # PSPICE temperature parameter conversions
         :t_abs => :temp,
         :t_rel_global => :dtemp,
         :t_measured => :tnom,
+    )
+end
+
+# HSPICE and PSpice support documentation parameters, no filtering needed
+# Default empty dict applies (no mapping or filtering)
+
+# VACASK requires conversion from ngspice parameter names
+# Note: VACASK Verilog-A models use tnom as the primary parameter.
+# Some models (diode, BJT) provide tref as an aliasparam for compatibility,
+# but not all models (e.g., resistor) have this alias. Always use tnom.
+function parameter_mapping(::VACASK)
+    Dict{Symbol, Union{Symbol, Nothing}}(
+        :tref => :tnom,  # ngspice compatibility alias → primary parameter
     )
 end
 
