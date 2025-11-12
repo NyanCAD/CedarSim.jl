@@ -15,3 +15,16 @@ SPAK.jl can convert between various netlist languages and dialects.
 Currently functionality:
 - Spice -> spice, applying some compatibility transforms
 - Spice -> Verilog-A, currently targeting Gnucap
+- Spice -> Spectre, currently targeting VACASK
+
+## Installation
+
+- launch a julia repl with `julia`
+- access the package shell with `]`
+- install the app with `app add "https://github.com/NyanCAD/SpiceArmyKnife.jl:SpiceArmyKnife.jl"`
+
+## Usage
+
+```
+spak-convert combined_models/sky130.lib.spice vacask/combined_models/sky130.lib.spice --input-simulator ngspice --output-simulator vacask
+```
