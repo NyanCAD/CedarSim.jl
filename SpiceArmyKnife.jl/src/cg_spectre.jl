@@ -317,6 +317,7 @@ end
 # SPICE Subcircuit: .subckt name n1 n2 → subckt name (n1 n2)
 function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Subckt})
     print(scope.io, "subckt ")
+    print(scope.io, get(scope.options, :ckt_prefix, ""))
     scope(n.name)
 
     # Nodes in parentheses
@@ -354,6 +355,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Subckt})
         else
             print(scope.io, " ")
         end
+        print(scope.io, get(scope.options, :ckt_prefix, ""))
         scope(n.name_end)
     end
     println(scope.io)
@@ -450,6 +452,7 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractSp
 
     # Non-binned model (or simulator has binning support): output normally
     print(scope.io, "model ")
+    print(scope.io, get(scope.options, :model_prefix, ""))
     scope(n.name)
     print(scope.io, " ")
 
@@ -462,9 +465,18 @@ function (scope::CodeGenScope{Sim})(n::SNode{SP.Model}) where {Sim <: AbstractSp
     model_name, type_params = spice_device_type_to_model_name(scope, device_type, level, version)
     print(scope.io, model_name)
 
+    # Output original parameters from AST
     for param in n.parameters
         print(scope.io, " ")
         scope(param)
+    end
+
+    # Inject type parameters from device mapping (e.g., type=1 for NMOS)
+    for (param_name, param_value) in type_params
+        print(scope.io, " ")
+        print(scope.io, lowercase(String(param_name)))
+        print(scope.io, "=")
+        print(scope.io, param_value)
     end
     println(scope.io)
 end
@@ -503,20 +515,22 @@ function generate_binned_models(scope::CodeGenScope{Sim}) where {Sim <: Abstract
             # Generate condition
             if i == 1
                 if Sim === VACASK
-                    println(scope.io, "@if l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax)
+                    println(scope.io, "@if l*\$scale >= ", lmin, " && l*\$scale < ", lmax, " && w*\$scale >= ", wmin, " && w*\$scale < ", wmax)
                 else
-                    print(scope.io, "if (l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax, ") {\n")
+                    print(scope.io, "if (l*\$scale >= ", lmin, " && l*\$scale < ", lmax, " && w*\$scale >= ", wmin, " && w*\$scale < ", wmax, ") {\n")
                 end
             else
                 if Sim === VACASK
-                    println(scope.io, "@elseif l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax)
+                    println(scope.io, "@elseif l*\$scale >= ", lmin, " && l*\$scale < ", lmax, " && w*\$scale >= ", wmin, " && w*\$scale < ", wmax)
                 else
-                    print(scope.io, "} else if (l >= ", lmin, " && l < ", lmax, " && w >= ", wmin, " && w < ", wmax, ") {\n")
+                    print(scope.io, "} else if (l*\$scale >= ", lmin, " && l *\$scale< ", lmax, " && w*\$scale >= ", wmin, " && w*\$scale < ", wmax, ") {\n")
                 end
             end
 
-            # Generate model line with base name (no .N suffix)
-            print(scope.io, "    model ", base_name, " ")
+            # Generate model line with base name (no .N suffix) and prefix
+            print(scope.io, "    model ")
+            print(scope.io, get(scope.options, :model_prefix, ""))
+            print(scope.io, base_name, " ")
 
             # Map SPICE device type to simulator-specific model name
             param_dict = build_param_dict(model_node.parameters)
@@ -527,10 +541,18 @@ function generate_binned_models(scope::CodeGenScope{Sim}) where {Sim <: Abstract
             model_name, type_params = spice_device_type_to_model_name(scope, device_type, level, version)
             print(scope.io, model_name)
 
-            # Output all parameters (including binning params for now)
+            # Output original parameters from AST
             for param in model_node.parameters
                 print(scope.io, " ")
                 scope(param)
+            end
+
+            # Inject type parameters from device mapping (e.g., type=1 for NMOS)
+            for (param_name, param_value) in type_params
+                print(scope.io, " ")
+                print(scope.io, lowercase(String(param_name)))
+                print(scope.io, "=")
+                print(scope.io, param_value)
             end
             println(scope.io)
         end
@@ -579,6 +601,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Resistor}
         # Model-based or parameter-based resistor
         if n.val !== nothing
             print(scope.io, " ")
+            print(scope.io, get(scope.options, :model_prefix, ""))
             scope(n.val)  # Model name
         else
             print(scope.io, " resistor")
@@ -608,6 +631,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Capacitor
         # Model-based or parameter-based capacitor
         if n.val !== nothing
             print(scope.io, " ")
+            print(scope.io, get(scope.options, :model_prefix, ""))
             scope(n.val)  # Model name
         else
             print(scope.io, " capacitor")
@@ -637,6 +661,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Inductor}
         # Model-based or parameter-based inductor
         if n.val !== nothing
             print(scope.io, " ")
+            print(scope.io, get(scope.options, :model_prefix, ""))
             scope(n.val)  # Model name
         else
             print(scope.io, " inductor")
@@ -659,6 +684,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.Diode})
     print(scope.io, " ")
     print(scope.io, format_node_list(scope, [n.pos, n.neg]))
     print(scope.io, " ")
+    print(scope.io, get(scope.options, :model_prefix, ""))
     scope(n.model)
 
     for param in n.params
@@ -684,6 +710,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.BipolarTr
 
     print(scope.io, format_node_list(scope, nodes))
     print(scope.io, " ")
+    print(scope.io, get(scope.options, :model_prefix, ""))
     scope(n.model)
 
     for param in n.params
@@ -699,6 +726,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.MOSFET})
     print(scope.io, " ")
     print(scope.io, format_node_list(scope, [n.d, n.g, n.s, n.b]))
     print(scope.io, " ")
+    print(scope.io, get(scope.options, :model_prefix, ""))
     scope(n.model)
 
     for param in n.parameters
@@ -778,6 +806,7 @@ function (scope::CodeGenScope{<:AbstractSpectreSimulator})(n::SNode{SP.SubcktCal
     print(scope.io, " ")
     print(scope.io, format_node_list(scope, n.nodes))
     print(scope.io, " ")
+    print(scope.io, get(scope.options, :ckt_prefix, ""))
     scope(something(n.model, n.model_after))
 
     for param in n.parameters

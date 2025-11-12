@@ -219,13 +219,38 @@ end
 # HSPICE and PSpice support documentation parameters, no filtering needed
 # Default empty dict applies (no mapping or filtering)
 
-# VACASK requires conversion from ngspice parameter names
+# VACASK requires conversion from ngspice parameter names and filtering of binning/device mapping params
 # Note: VACASK Verilog-A models use tnom as the primary parameter.
 # Some models (diode, BJT) provide tref as an aliasparam for compatibility,
 # but not all models (e.g., resistor) have this alias. Always use tnom.
 function parameter_mapping(::VACASK)
     Dict{Symbol, Union{Symbol, Nothing}}(
         :tref => :tnom,  # ngspice compatibility alias → primary parameter
+
+        # Binning parameters - VACASK does not support runtime binning
+        :lmin => nothing,
+        :lmax => nothing,
+        :wmin => nothing,
+        :wmax => nothing,
+
+        # Device mapping parameters - handled by model selection
+        :level => nothing,
+        :version => nothing,
+    )
+end
+
+# OpenVAF and Gnucap also need binning/device mapping parameter filtering
+function parameter_mapping(::Union{OpenVAF, Gnucap})
+    Dict{Symbol, Union{Symbol, Nothing}}(
+        # Binning parameters - not supported in Verilog-A output
+        :lmin => nothing,
+        :lmax => nothing,
+        :wmin => nothing,
+        :wmax => nothing,
+
+        # Device mapping parameters - handled by model selection
+        :level => nothing,
+        :version => nothing,
     )
 end
 

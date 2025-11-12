@@ -156,7 +156,9 @@ function (@main)(ARGS)
             :main_output_file => output_file_abs,
             :spice_dialect => input_simulator_sym,
             :va_models => model_database,
-            :library_name => lib_name
+            :library_name => lib_name,
+            :model_prefix => "m_",
+            :ckt_prefix => ""
         )
         open(output_file, "w") do io
             generate_code(ast, io, output_sim; options=options, includepaths=includepaths)

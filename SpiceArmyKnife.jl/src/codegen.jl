@@ -265,6 +265,14 @@ const DEVICE_MAPPINGS = [
     DeviceMapping(spice_type="PMOS", model_name="bsim4", level=54, params=Dict(:TYPE => -1)),
 
     # =============================================================================
+    # MOSFET - BSIM4 VACASK (levels 14, 54)
+    # =============================================================================
+    DeviceMapping(spice_type="NMOS", model_name="sp_bsim4v8", level=14, params=Dict(:TYPE => 1), output_sim=VACASK),
+    DeviceMapping(spice_type="PMOS", model_name="sp_bsim4v8", level=14, params=Dict(:TYPE => -1), output_sim=VACASK),
+    DeviceMapping(spice_type="NMOS", model_name="sp_bsim4v8", level=54, params=Dict(:TYPE => 1), output_sim=VACASK),
+    DeviceMapping(spice_type="PMOS", model_name="sp_bsim4v8", level=54, params=Dict(:TYPE => -1), output_sim=VACASK),
+
+    # =============================================================================
     # MOSFET - BSIMCMG107 (levels 17, 72)
     # =============================================================================
     DeviceMapping(spice_type="NMOS", model_name="bsimcmg107", level=17, version="107", params=Dict(:DEVTYPE => 1)),
